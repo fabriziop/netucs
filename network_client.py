@@ -14,6 +14,7 @@ import logging as log
 import pickle as pk
 import struct as st
 import time as tm
+import random as rd
 
 from . import network_common as nc
 
@@ -29,6 +30,10 @@ class NetworkClient(nc.Protocol):
         client_lifetime_guard,
         acknowledge_timeout,
         data_queue,
+        backoff_min_repeat=1.0,
+        backoff_max_repeat=60.0,
+        backoff_time_constant=2.0,
+        backoff_variance=0.1,
     ):
 
         super().__init__()
@@ -48,6 +53,13 @@ class NetworkClient(nc.Protocol):
         self.last_request_time = 0
         self.packet_header_size = st.calcsize(nc.HEADER_FMT)
         self.log = log.getLogger(__name__)
+        
+        # Exponential backoff parameters
+        self.backoff_min_repeat = backoff_min_repeat
+        self.backoff_max_repeat = backoff_max_repeat
+        self.backoff_time_constant = backoff_time_constant
+        self.backoff_variance = backoff_variance
+        self.backoff_retry_count = 0
 
     def log_level(self, alog_level):
 
@@ -56,6 +68,24 @@ class NetworkClient(nc.Protocol):
     def terminate(self):
 
         self.terminate_event.set()
+
+    def _calculate_backoff_delay(self):
+        """Calculate exponential backoff with noise.
+        
+        Formula: delay = min(max_repeat, min_repeat * (time_constant ^ retry_count) + noise)
+        where noise is gaussian with variance parameter.
+        """
+        # Calculate exponential base delay
+        base_delay = self.backoff_min_repeat * (self.backoff_time_constant ** self.backoff_retry_count)
+        
+        # Add gaussian noise with standard deviation = backoff_variance * base_delay
+        noise = rd.gauss(0, self.backoff_variance * base_delay)
+        
+        # Calculate final delay, bounded by min and max
+        delay = base_delay + noise
+        delay = max(self.backoff_min_repeat, min(self.backoff_max_repeat, delay))
+        
+        return delay
 
 
     def datagram_received(self, data, addr):
@@ -133,10 +163,22 @@ class NetworkClient(nc.Protocol):
                     await self.acknowledge_received.wait()
                     self.acknowledge_received.clear()
                     self.log.info("received marker request acknowledge")
-            # if timeout expired, resend marker request immediately
+                    # Reset backoff on successful acknowledgment
+                    self.backoff_retry_count = 0
+            # if timeout expired, apply exponential backoff
             except ai.TimeoutError:
-                self.log.error("marker request acknowledge timeout")
-                self.last_request_time = 0
+                self.log.warning("marker request acknowledge timeout (retry count: %d)", self.backoff_retry_count)
+                
+                # Calculate and apply exponential backoff with noise
+                backoff_delay = self._calculate_backoff_delay()
+                self.log.info("applying exponential backoff: %.3f seconds (retry count: %d)", 
+                             backoff_delay, self.backoff_retry_count)
+                
+                # Schedule next request with backoff delay
+                self.last_request_time = tm.time() - (self.client_lifetime - self.client_lifetime_guard - backoff_delay)
+                
+                # Increment retry counter for next timeout
+                self.backoff_retry_count += 1
 
     async def run(self):
         try:

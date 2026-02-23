@@ -153,7 +153,9 @@ UDP client that requests data from the server at regular intervals.
 
 ```python
 NetworkClient(server_address, server_port, client_lifetime, 
-              client_lifetime_guard, acknowledge_timeout, data_queue)
+              client_lifetime_guard, acknowledge_timeout, data_queue,
+              backoff_min_repeat=1.0, backoff_max_repeat=60.0,
+              backoff_time_constant=2.0, backoff_variance=0.1)
 ```
 
 - **server_address** (str): Server IP address
@@ -162,6 +164,10 @@ NetworkClient(server_address, server_port, client_lifetime,
 - **client_lifetime_guard** (float): Guard time before sending next request (seconds)
 - **acknowledge_timeout** (float): Timeout waiting for server acknowledgment (seconds)
 - **data_queue** (queue.Queue): Queue to place received data items
+- **backoff_min_repeat** (float, optional): Minimum backoff delay in seconds (default: 1.0)
+- **backoff_max_repeat** (float, optional): Maximum backoff delay in seconds (default: 60.0)
+- **backoff_time_constant** (float, optional): Exponential backoff time constant (default: 2.0)
+- **backoff_variance** (float, optional): Gaussian noise variance as fraction of base delay (default: 0.1)
 
 #### Methods
 
@@ -218,6 +224,34 @@ Contains shared protocol definitions and data structures.
 - `MAX_UDP_SIZE = 65507`: Maximum UDP datagram size
 
 ## Protocol Details
+
+### Exponential Backoff with Noise
+
+When a client fails to receive an acknowledgment within `acknowledge_timeout`, it applies exponential backoff before the next request attempt. This prevents overwhelming the server during network issues or server unavailability.
+
+**Backoff Formula:**
+```
+base_delay = min_repeat × (time_constant ^ retry_count)
+noise = Gaussian(μ=0, σ=variance × base_delay)
+delay = max(min_repeat, min(max_repeat, base_delay + noise))
+```
+
+**Parameters:**
+- `backoff_min_repeat`: Minimum delay between retries (seconds)
+- `backoff_max_repeat`: Maximum delay between retries (seconds)  
+- `backoff_time_constant`: Exponential growth factor (e.g., 2.0 = double each retry)
+- `backoff_variance`: Gaussian noise amplitude as fraction of base delay
+
+**Example:**
+With `min_repeat=1.0`, `time_constant=2.0`:
+- Retry 0: ~1.0 second
+- Retry 1: ~2.0 seconds + noise
+- Retry 2: ~4.0 seconds + noise
+- Retry 3: ~8.0 seconds + noise
+- etc., capped at `max_repeat`
+
+**Backoff Reset:**
+The retry counter resets to 0 upon successful acknowledgment, so recovery is immediate when the server responds.
 
 ### Communication Flow
 
@@ -282,14 +316,36 @@ server = ns.NetworkServer(
     data_queue=data_in
 )
 
-# Client: Longer request interval
+# Client: Longer request interval with conservative backoff
 client = nc.NetworkClient(
     server_address='192.168.1.100',
     server_port=5000,
     client_lifetime=240,  # request every 4 minutes
     client_lifetime_guard=30,  # 30 second guard
     acknowledge_timeout=10,
-    data_queue=data_out
+    data_queue=data_out,
+    backoff_min_repeat=5.0,  # start at 5 seconds
+    backoff_max_repeat=300.0,  # max 5 minutes
+    backoff_time_constant=1.5,  # conservative growth
+    backoff_variance=0.2  # 20% noise
+)
+```
+
+### Unreliable Network (High Backoff)
+
+```python
+# Client for unreliable networks with aggressive backoff strategy
+client = nc.NetworkClient(
+    server_address='remote.network.example.com',
+    server_port=5000,
+    client_lifetime=30,
+    client_lifetime_guard=5,
+    acknowledge_timeout=10,
+    data_queue=data_out,
+    backoff_min_repeat=2.0,  # start at 2 seconds
+    backoff_max_repeat=120.0,  # max 2 minutes
+    backoff_time_constant=2.0,  # exponential growth
+    backoff_variance=0.3  # 30% noise for jitter
 )
 ```
 
