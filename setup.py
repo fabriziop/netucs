@@ -16,7 +16,7 @@ setup(
     description="Network UDP Client Server data exchange - asynchronous client/server UDP communication",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/f-pollastri/netucs",
+    url="https://github.com/fabriziop/netucs",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -36,7 +36,7 @@ setup(
     python_requires=">=3.8",
     keywords="udp client server asyncio network communication data-exchange",
     project_urls={
-        "Bug Reports": "https://github.com/f-pollastri/netucs/issues",
-        "Source": "https://github.com/f-pollastri/netucs",
+        "Bug Reports": "https://github.com/fabriziop/netucs/issues",
+        "Source": "https://github.com/fabriziop/netucs",
     },
 )

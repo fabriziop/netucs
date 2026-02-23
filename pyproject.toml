@@ -30,9 +30,9 @@ classifiers = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/f-pollastri/netucs"
-"Bug Reports" = "https://github.com/f-pollastri/netucs/issues"
-"Source" = "https://github.com/f-pollastri/netucs"
+"Homepage" = "https://github.com/fabriziop/netucs"
+"Bug Reports" = "https://github.com/fabriziop/netucs/issues"
+"Source" = "https://github.com/fabriziop/netucs"
 
 [tool.setuptools]
 packages = ["netucs"]
