@@ -3,7 +3,7 @@
 # .context    : generic data UDP sending from server to clients
 # .title      : common code to client and server
 # .kind       : python script
-# .author     : Fabrizio Pollastri <f.pollastri@inrim.it>
+# .author     : Fabrizio Pollastri <mxgbot@gmail.com>
 # .site       : Torino - Italy
 # .creation   : 9-Oct-2023
 # .copyright  : (c) 2023 Fabrizio Pollastri

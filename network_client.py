@@ -2,7 +2,7 @@
 # .context    : generic data UDP sending from server to clients
 # .title      : client network data receiver
 # .kind       : python module
-# .author     : Fabrizio Pollastri <f.pollastri@inrim.it>
+# .author     : Fabrizio Pollastri <mxgbot@gmail.com>
 # .site       : Torino - Italy
 # .creation   : 11-Oct-2023
 # .copyright  : (c) 2023 Fabrizio Pollastri

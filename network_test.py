@@ -3,7 +3,7 @@
 # .context    : simple client from server network data receiving
 # .title      : test sending and receiving data from server to client
 # .kind       : python module
-# .author     : Fabrizio Pollastri <f.pollastri@inrim.it>
+# .author     : Fabrizio Pollastri <mxgbot@gmail.com>
 # .site       : Torino - Italy
 # .creation   : 06-Jul-2025
 # .copyright  : (c) 2025 Fabrizio Pollastri

@@ -3,7 +3,7 @@
 # .context    : generic data UDP sending from server to clients
 # .title      : network UDP client server (netucs) package
 # .kind       : python package
-# .author     : Fabrizio Pollastri <f.pollastri@inrim.it>
+# .author     : Fabrizio Pollastri <mxgbot@gmail.com>
 # .site       : Torino - Italy
 # .copyright  : (c) 2023-2026 Fabrizio Pollastri
 # .license    : all right reserved

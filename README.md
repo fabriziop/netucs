@@ -360,10 +360,10 @@ except Exception as e:
 
 ## License
 
-All right reserved - Fabrizio Pollastri 2023-2026
+This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
 
 ## Author
 
-Fabrizio Pollastri <f.pollastri@inrim.it>
+Fabrizio Pollastri <mxgbot@gmail.com>
 INRIM - Istituto Nazionale di Ricerca Metrologica
 Torino, Italy
