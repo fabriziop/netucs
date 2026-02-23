@@ -12,7 +12,7 @@ setup(
     name="netucs",
     version="1.0.0",
     author="Fabrizio Pollastri",
-    author_email="f.pollastri@inrim.it",
+    author_email="mxgbot@gmail.com",
     description="Network UDP Client Server data exchange - asynchronous client/server UDP communication",
     long_description=long_description,
     long_description_content_type="text/markdown",

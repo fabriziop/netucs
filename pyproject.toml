@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "GPLv3"}
 authors = [
-    {name = "Fabrizio Pollastri", email = "f.pollastri@inrim.it"},
+    {name = "Fabrizio Pollastri", email = "mxgbot@gmail.com"},
 ]
 keywords = ["udp", "client", "server", "asyncio", "network", "communication", "data-exchange"]
 classifiers = [
