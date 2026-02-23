@@ -24,7 +24,7 @@ setup(
         "Intended Audience :: Science/Research",
         "Topic :: Communications",
         "Topic :: Software Development :: Libraries :: Python Modules",
-        "License :: Other/Proprietary License",
+        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
