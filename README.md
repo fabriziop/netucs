@@ -154,7 +154,7 @@ UDP client that requests data from the server at regular intervals.
 ```python
 NetworkClient(server_address, server_port, client_lifetime, 
               client_lifetime_guard, acknowledge_timeout, data_queue,
-              backoff_min_repeat=1.0, backoff_max_repeat=60.0,
+              backoff_min_period=1.0, backoff_max_period=60.0,
               backoff_time_constant=2.0, backoff_variance=0.1)
 ```
 
@@ -164,8 +164,8 @@ NetworkClient(server_address, server_port, client_lifetime,
 - **client_lifetime_guard** (float): Guard time before sending next request (seconds)
 - **acknowledge_timeout** (float): Timeout waiting for server acknowledgment (seconds)
 - **data_queue** (queue.Queue): Queue to place received data items
-- **backoff_min_repeat** (float, optional): Minimum backoff delay in seconds (default: 1.0)
-- **backoff_max_repeat** (float, optional): Maximum backoff delay in seconds (default: 60.0)
+- **backoff_min_period** (float, optional): Minimum backoff delay in seconds (default: 1.0)
+- **backoff_max_period** (float, optional): Maximum backoff delay in seconds (default: 60.0)
 - **backoff_time_constant** (float, optional): Exponential backoff time constant (default: 2.0)
 - **backoff_variance** (float, optional): Gaussian noise variance as fraction of base delay (default: 0.1)
 
@@ -231,19 +231,19 @@ When a client fails to receive an acknowledgment within `acknowledge_timeout`, i
 
 **Backoff Formula:**
 ```
-base_delay = min_repeat × (time_constant ^ retry_count)
+base_delay = min_period × (time_constant ^ retry_count)
 noise = Gaussian(μ=0, σ=variance × base_delay)
-delay = max(min_repeat, min(max_repeat, base_delay + noise))
+delay = max(min_period, min(max_period, base_delay + noise))
 ```
 
 **Parameters:**
-- `backoff_min_repeat`: Minimum delay between retries (seconds)
-- `backoff_max_repeat`: Maximum delay between retries (seconds)  
+- `backoff_min_period`: Minimum delay between retries (seconds)
+- `backoff_max_period`: Maximum delay between retries (seconds)  
 - `backoff_time_constant`: Exponential growth factor (e.g., 2.0 = double each retry)
 - `backoff_variance`: Gaussian noise amplitude as fraction of base delay
 
 **Example:**
-With `min_repeat=1.0`, `time_constant=2.0`:
+With `min_period=1.0`, `time_constant=2.0`:
 - Retry 0: ~1.0 second
 - Retry 1: ~2.0 seconds + noise
 - Retry 2: ~4.0 seconds + noise
@@ -282,6 +282,22 @@ Client                          Server
 - Useful for detecting duplicate or reordered packets in analysis
 
 ## Configuration Examples
+
+### Config Files
+
+```python
+import asyncio as ai
+from netucs.network_client import NetworkClient
+from netucs.network_server import NetworkServer
+from netucs.network_client_config_example import CLIENT_CONFIG
+from netucs.network_server_config_example import SERVER_CONFIG
+
+data_in = ai.Queue()
+data_out = ai.Queue()
+
+server = NetworkServer(data_queue=data_in, **SERVER_CONFIG)
+client = NetworkClient(data_queue=data_out, **CLIENT_CONFIG)
+```
 
 ### High-Frequency Real-Time System
 
@@ -324,8 +340,8 @@ client = nc.NetworkClient(
     client_lifetime_guard=30,  # 30 second guard
     acknowledge_timeout=10,
     data_queue=data_out,
-    backoff_min_repeat=5.0,  # start at 5 seconds
-    backoff_max_repeat=300.0,  # max 5 minutes
+    backoff_min_period=5.0,  # start at 5 seconds
+    backoff_max_period=300.0,  # max 5 minutes
     backoff_time_constant=1.5,  # conservative growth
     backoff_variance=0.2  # 20% noise
 )
@@ -342,8 +358,8 @@ client = nc.NetworkClient(
     client_lifetime_guard=5,
     acknowledge_timeout=10,
     data_queue=data_out,
-    backoff_min_repeat=2.0,  # start at 2 seconds
-    backoff_max_repeat=120.0,  # max 2 minutes
+    backoff_min_period=2.0,  # start at 2 seconds
+    backoff_max_period=120.0,  # max 2 minutes
     backoff_time_constant=2.0,  # exponential growth
     backoff_variance=0.3  # 30% noise for jitter
 )

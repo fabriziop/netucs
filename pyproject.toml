@@ -1,3 +1,14 @@
+# .+
+# .context    : generic data UDP sending from server to clients
+# .title      : project configuration
+# .kind       : TOML configuration
+# .author     : Fabrizio Pollastri <mxgbot@gmail.com>
+# .site       : Torino - Italy
+# .creation   : 24-Feb-2026
+# .copyright  : (c) 2023 Fabrizio Pollastri
+# .license    : all right reserved
+# .-
+
 [build-system]
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
