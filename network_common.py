@@ -19,6 +19,12 @@ import struct as st
 
 MAX_UDP_SIZE = 65507  # https://en.wikipedia.org/wiki/User_Datagram_Protocol
 
+# Exponential backoff default parameters
+BACKOFF_MIN_PERIOD = 1.0  # Minimum backoff delay in seconds
+BACKOFF_MAX_PERIOD = 60.0  # Maximum backoff delay in seconds
+BACKOFF_TIME_CONSTANT = 2.0  # Exponential growth factor
+BACKOFF_VARIANCE = 0.1  # Gaussian noise variance as fraction of base delay
+
 
 # packet types
 class PacketTypeCode(en.Enum):

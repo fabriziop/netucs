@@ -30,10 +30,10 @@ class NetworkClient(nc.Protocol):
         client_lifetime_guard,
         acknowledge_timeout,
         data_queue,
-        backoff_min_repeat=1.0,
-        backoff_max_repeat=60.0,
-        backoff_time_constant=2.0,
-        backoff_variance=0.1,
+        backoff_min_period=nc.BACKOFF_MIN_PERIOD,
+        backoff_max_period=nc.BACKOFF_MAX_PERIOD,
+        backoff_time_constant=nc.BACKOFF_TIME_CONSTANT,
+        backoff_variance=nc.BACKOFF_VARIANCE,
     ):
 
         super().__init__()
@@ -55,8 +55,8 @@ class NetworkClient(nc.Protocol):
         self.log = log.getLogger(__name__)
         
         # Exponential backoff parameters
-        self.backoff_min_repeat = backoff_min_repeat
-        self.backoff_max_repeat = backoff_max_repeat
+        self.backoff_min_period = backoff_min_period
+        self.backoff_max_period = backoff_max_period
         self.backoff_time_constant = backoff_time_constant
         self.backoff_variance = backoff_variance
         self.backoff_retry_count = 0
@@ -72,18 +72,18 @@ class NetworkClient(nc.Protocol):
     def _calculate_backoff_delay(self):
         """Calculate exponential backoff with noise.
         
-        Formula: delay = min(max_repeat, min_repeat * (time_constant ^ retry_count) + noise)
+        Formula: delay = min(max_period, min_period * (time_constant ^ retry_count) + noise)
         where noise is gaussian with variance parameter.
         """
         # Calculate exponential base delay
-        base_delay = self.backoff_min_repeat * (self.backoff_time_constant ** self.backoff_retry_count)
+        base_delay = self.backoff_min_period * (self.backoff_time_constant ** self.backoff_retry_count)
         
         # Add gaussian noise with standard deviation = backoff_variance * base_delay
         noise = rd.gauss(0, self.backoff_variance * base_delay)
         
         # Calculate final delay, bounded by min and max
         delay = base_delay + noise
-        delay = max(self.backoff_min_repeat, min(self.backoff_max_repeat, delay))
+        delay = max(self.backoff_min_period, min(self.backoff_max_period, delay))
         
         return delay
 
