@@ -107,9 +107,18 @@ class Protocol(ai.DatagramProtocol):
 
     # exc: OS error instance
     def error_received(self, exc):
-        self.terminate()
+        # Log UDP errors but don't terminate - these are common when server is unreachable
+        # The acknowledge timeout and backoff mechanism will handle retries
+        import logging
+        log = logging.getLogger(__name__)
+        log.debug("UDP socket error (expected when server unreachable): %s", exc)
 
     def connection_lost(self, exc):
+        # Only terminate on actual connection loss
+        import logging
+        log = logging.getLogger(__name__)
+        if exc:
+            log.warning("Connection lost with error: %s", exc)
         self.terminate()
 
 
