@@ -443,5 +443,4 @@ See the [LICENSE](LICENSE) file for details.
 ## Author
 
 Fabrizio Pollastri <mxgbot@gmail.com>
-INRIM - Istituto Nazionale di Ricerca Metrologica
 Torino, Italy

@@ -10,13 +10,15 @@
 # .-
 
 import asyncio as ai
-import logging as log
+import logging
 import pickle as pk
 import struct as st
 import time as tm
 import random as rd
 
 from . import network_common as nc
+
+lg = logging.getLogger(__name__)
 
 
 class NetworkClient(nc.Protocol):
@@ -52,8 +54,7 @@ class NetworkClient(nc.Protocol):
         self.task_sender = None
         self.last_request_time = 0
         self.packet_header_size = st.calcsize(nc.HEADER_FMT)
-        self.log = log.getLogger(__name__)
-        
+
         # Exponential backoff parameters
         self.backoff_min_period = backoff_min_period
         self.backoff_max_period = backoff_max_period
@@ -61,30 +62,26 @@ class NetworkClient(nc.Protocol):
         self.backoff_variance = backoff_variance
         self.backoff_retry_count = 0
 
-    def log_level(self, alog_level):
-
-        self.log.setLevel(alog_level)
-
     def terminate(self):
 
         self.terminate_event.set()
 
     def _calculate_backoff_delay(self):
         """Calculate exponential backoff with noise.
-        
+
         Formula: delay = min(max_period, min_period * (time_constant ^ retry_count) + noise)
         where noise is gaussian with variance parameter.
         """
         # Calculate exponential base delay
         base_delay = self.backoff_min_period * (self.backoff_time_constant ** self.backoff_retry_count)
-        
+
         # Add gaussian noise with standard deviation = backoff_variance * base_delay
         noise = rd.gauss(0, self.backoff_variance * base_delay)
-        
+
         # Calculate final delay, bounded by min and max
         delay = base_delay + noise
         delay = max(self.backoff_min_period, min(self.backoff_max_period, delay))
-        
+
         return delay
 
 
@@ -96,7 +93,7 @@ class NetworkClient(nc.Protocol):
 
             # skip packet header, deserialize data and put it on output queue
             self.data_queue.put(pk.loads(data[self.packet_header_size :]))
-            log.debug("received time marker from server")
+            lg.debug("received time marker from server")
 
         # process marker ackknowledge
         elif self.receive_packet_type == nc.PacketTypeCode["ACKNOWLEDGE"].value:
@@ -117,7 +114,7 @@ class NetworkClient(nc.Protocol):
         try:
             await self.terminate_event.wait()
         except:
-            self.log.exception("")
+            lg.exception("")
         finally:
             self.transport.close()
 
@@ -131,7 +128,7 @@ class NetworkClient(nc.Protocol):
         while not self.terminate_event.is_set():
 
             loop_iteration += 1
-            self.log.debug("sender loop iteration %d (backoff_retry_count=%d)", 
+            lg.debug("sender loop iteration %d (backoff_retry_count=%d)", 
                           loop_iteration, self.backoff_retry_count)
 
             # wait for time to send marker request to server
@@ -143,7 +140,7 @@ class NetworkClient(nc.Protocol):
                 - now
             )
             if delay > 0:
-                self.log.debug("waiting %.3f seconds before next request", delay)
+                lg.debug("waiting %.3f seconds before next request", delay)
                 for awaitable in ai.as_completed(
                     [ai.sleep(delay), self.terminate_event.wait()]
                 ):
@@ -153,7 +150,7 @@ class NetworkClient(nc.Protocol):
                     break
 
             # send data request
-            self.log.debug("sending data request (seq_num=%d)", self.send_seq_num)
+            lg.debug("sending data request (seq_num=%d)", self.send_seq_num)
             self.transport.sendto(
                 nc.data_query_packet.pack(
                     nc.PacketTypeCode.DATA_QUERY.value, self.send_seq_num, 1
@@ -169,41 +166,41 @@ class NetworkClient(nc.Protocol):
                 async with ai.timeout(self.acknowledge_timeout):
                     await self.acknowledge_received.wait()
                     self.acknowledge_received.clear()
-                    self.log.info("received marker request acknowledge")
+                    lg.info("received marker request acknowledge")
                     # Reset backoff on successful acknowledgment
                     self.backoff_retry_count = 0
             # if timeout expired, apply exponential backoff
             except ai.TimeoutError:
-                self.log.warning("marker request acknowledge timeout (retry count: %d)", self.backoff_retry_count)
+                lg.warning("marker request acknowledge timeout (retry count: %d)", self.backoff_retry_count)
 
                 # Check if already terminating
                 if self.terminate_event.is_set():
-                    self.log.warning("terminate_event already set before backoff, exiting sender loop")
+                    lg.warning("terminate_event already set before backoff, exiting sender loop")
                     break
 
                 # Ensure the ack event does not stay set after a timeout.
                 self.acknowledge_received.clear()
-                
+
                 # Calculate and apply exponential backoff with noise
                 backoff_delay = self._calculate_backoff_delay()
-                self.log.info("applying exponential backoff: %.3f seconds (retry count: %d)", 
+                lg.info("applying exponential backoff: %.3f seconds (retry count: %d)",
                              backoff_delay, self.backoff_retry_count)
 
                 # Increment retry counter before backoff wait
                 self.backoff_retry_count += 1
 
                 # Wait for backoff duration, but allow clean termination.
-                self.log.debug("starting backoff wait of %.3f seconds", backoff_delay)
-                
+                lg.debug("starting backoff wait of %.3f seconds", backoff_delay)
+
                 # Use asyncio.wait_for to combine sleep and termination check
                 backoff_task = ai.create_task(ai.sleep(backoff_delay))
                 terminate_task = ai.create_task(self.terminate_event.wait())
-                
+
                 done, pending = await ai.wait(
                     {backoff_task, terminate_task},
                     return_when=ai.FIRST_COMPLETED
                 )
-                
+
                 # Cancel pending task
                 for task in pending:
                     task.cancel()
@@ -211,13 +208,13 @@ class NetworkClient(nc.Protocol):
                         await task
                     except ai.CancelledError:
                         pass
-                
+
                 # Check which completed first
                 if terminate_task in done:
-                    self.log.debug("termination requested during backoff")
+                    lg.debug("termination requested during backoff")
                     break
                 else:
-                    self.log.debug("backoff wait completed, will retry immediately (new retry_count=%d)", 
+                    lg.debug("backoff wait completed, will retry immediately (new retry_count=%d)",
                                   self.backoff_retry_count)
 
                 # Send immediately after backoff (skip the remaining lifetime delay).
@@ -234,7 +231,7 @@ class NetworkClient(nc.Protocol):
                 self.task_listener = tg.create_task(self.listener())
                 self.task_sender = tg.create_task(self.sender())
         except:
-            self.log.exception("")
+            lg.exception("")
             self.terminate()
 
     def main(self):
@@ -242,7 +239,7 @@ class NetworkClient(nc.Protocol):
             with ai.Runner() as runner:
                 runner.run(self.run())
         except:
-            self.log.exception("")
+            lg.exception("")
             self.terminate()
 
 #### END

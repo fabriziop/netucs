@@ -13,7 +13,10 @@
 import asyncio as ai
 from dataclasses import dataclass
 import enum as en
+import logging
 import struct as st
+
+lg = logging.getLogger(__name__)
 
 ## client/server protocol
 
@@ -109,16 +112,12 @@ class Protocol(ai.DatagramProtocol):
     def error_received(self, exc):
         # Log UDP errors but don't terminate - these are common when server is unreachable
         # The acknowledge timeout and backoff mechanism will handle retries
-        import logging
-        log = logging.getLogger(__name__)
-        log.debug("UDP socket error (expected when server unreachable): %s", exc)
+        lg.debug("UDP socket error (expected when server unreachable): %s", exc)
 
     def connection_lost(self, exc):
         # Only terminate on actual connection loss
-        import logging
-        log = logging.getLogger(__name__)
         if exc:
-            log.warning("Connection lost with error: %s", exc)
+            lg.warning("Connection lost with error: %s", exc)
         self.terminate()
 
 

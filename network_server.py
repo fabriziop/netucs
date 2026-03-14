@@ -12,13 +12,15 @@
 # .-
 
 import asyncio as ai
-import logging as log
+import logging
 import pickle as pk
 import socket as sk
 import struct as st
 import time as tm
 
 from . import network_common as nc
+
+lg = logging.getLogger(__name__)
 
 
 class NetworkServer(nc.Protocol):
@@ -43,11 +45,7 @@ class NetworkServer(nc.Protocol):
         self.clients_to_add = ai.Queue()
         self.clients = {}
         self.packet_header_size = st.calcsize(nc.HEADER_FMT)
-        self.log = log.getLogger(__name__)
-
-    def log_level(self, alog_level):
-
-        self.log.setLevel(alog_level)
+        self.log = lg
 
     def terminate(self):
 
@@ -64,7 +62,7 @@ class NetworkServer(nc.Protocol):
             # if it is a data query packet ...
             # not data query packets are silently discarded
             if packet_type == nc.PacketTypeCode["DATA_QUERY"].value:
-                self.log.info("received data request from %s}",addr)
+                self.log.info("received data request from %s}", addr)
 
                 # send acknowledge to client
                 packet = nc.acknowledge_packet.pack(

@@ -15,9 +15,11 @@ from .network_server import *
 from .network_client import *
 
 import concurrent.futures as cf
-import logging as lg
+import logging
 import numpy as np
 import time as tm
+
+lg = logging.getLogger(__name__)
 
 # parameters
 PRODUCER_QUEUE_DEPTH = 3
@@ -31,7 +33,7 @@ CLIENT_LIFETIME_GUARD = 5   # seconds
 ACKNOWLEDGE_TIMEOUT = 5  # seconds
 
 # logging level
-lg.basicConfig(level=lg.INFO)
+logging.basicConfig(level=logging.INFO)
 
 # make random generation reproducible
 np.random.seed(1)
@@ -50,10 +52,8 @@ consumer_queue = qu.Queue(CONSUMER_QUEUE_DEPTH)
 
 # create a network server and a client to send data from server to client
 server = NetworkServer(SERVER_ADDRESS,SERVER_PORT,CLIENT_LIFETIME,producer_queue)
-server.log_level(lg.WARNING)
 client = NetworkClient(SERVER_ADDRESS,SERVER_PORT,CLIENT_LIFETIME,
              CLIENT_LIFETIME_GUARD,ACKNOWLEDGE_TIMEOUT,consumer_queue)
-client.log_level(lg.WARNING)
 
 # fill queue with one element: ramdom data and its summation
 def producer(producer_queue):
