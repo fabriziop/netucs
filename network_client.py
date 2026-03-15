@@ -91,8 +91,9 @@ class NetworkClient(nc.Protocol):
         # process data response
         if self.receive_packet_type == nc.PacketTypeCode["DATA_RESPONSE"].value:
 
-            # skip packet header, deserialize data and put it on output queue
-            self.data_queue.put(pk.loads(data[self.packet_header_size :]))
+            # skip packet header, add rx timestamp, deserialize data and put
+            # it on output queue.
+            self.data_queue.put((tm.time(), pk.loads(data[self.packet_header_size :])))
             lg.debug("received time marker from server")
 
         # process marker ackknowledge
