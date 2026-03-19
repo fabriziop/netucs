@@ -52,6 +52,7 @@ class NetworkClient(nc.Protocol):
         self.acknowledge_received = None
         self.task_listener = None
         self.task_sender = None
+        self.terminate_requested = False
         self.last_request_time = 0
         self.packet_header_size = st.calcsize(nc.HEADER_FMT)
 
@@ -63,7 +64,12 @@ class NetworkClient(nc.Protocol):
         self.backoff_retry_count = 0
 
     def terminate(self):
-
+        self.terminate_requested = True
+        # terminate_event is created inside run(); terminate may be requested
+        # earlier when startup fails in another thread.
+        if self.terminate_event is None:
+            lg.debug("terminate requested before network client startup")
+            return
         self.terminate_event.set()
 
     def _calculate_backoff_delay(self):
@@ -229,6 +235,8 @@ class NetworkClient(nc.Protocol):
                 self.loop = ai.get_event_loop()
                 self.terminate_event = ai.Event()
                 self.acknowledge_received = ai.Event()
+                if self.terminate_requested:
+                    self.terminate_event.set()
                 self.task_listener = tg.create_task(self.listener())
                 self.task_sender = tg.create_task(self.sender())
         except:

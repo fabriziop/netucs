@@ -42,13 +42,19 @@ class NetworkServer(nc.Protocol):
         self.terminate_event = None
         self.task_listener = None
         self.task_sender = None
+        self.terminate_requested = False
         self.clients_to_add = ai.Queue()
         self.clients = {}
         self.packet_header_size = st.calcsize(nc.HEADER_FMT)
         self.log = lg
 
     def terminate(self):
-
+        self.terminate_requested = True
+        # terminate_event is created inside run(); terminate may be requested
+        # earlier when startup fails in another thread.
+        if self.terminate_event is None:
+            lg.debug("terminate requested before network server startup")
+            return
         self.terminate_event.set()
 
     def datagram_received(self, data, addr):
@@ -175,6 +181,8 @@ class NetworkServer(nc.Protocol):
             async with ai.TaskGroup() as tg:
                 self.loop = ai.get_event_loop()
                 self.terminate_event = ai.Event()
+                if self.terminate_requested:
+                    self.terminate_event.set()
                 self.task_listener = tg.create_task(self.listener())
                 self.task_sender = tg.create_task(self.sender())
         except:
