@@ -97,7 +97,6 @@ class NetworkServer(nc.Protocol):
                     self.clients[addr].expiration = expiration
         except:
             self.log.exception("")
-            self.terminate()
 
     async def listener(self):
 
@@ -187,13 +186,11 @@ class NetworkServer(nc.Protocol):
                 self.task_sender = tg.create_task(self.sender())
         except:
             self.log.exception("")
-            self.terminate()
 
     def main(self):
         try:
             ai.run(self.run())
         except:
             self.log.exception("")
-            self.terminate()
 
 #### END

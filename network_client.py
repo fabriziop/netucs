@@ -10,6 +10,7 @@
 # .-
 
 import asyncio as ai
+import errno
 import logging
 import pickle as pk
 import struct as st
@@ -54,6 +55,7 @@ class NetworkClient(nc.Protocol):
         self.task_sender = None
         self.terminate_requested = False
         self.last_request_time = 0
+        self.reconnect_event = None
         self.packet_header_size = st.calcsize(nc.HEADER_FMT)
 
         # Exponential backoff parameters
@@ -108,22 +110,92 @@ class NetworkClient(nc.Protocol):
             # stop acknowledge timeout
             self.acknowledge_received.set()
 
+    # OS error numbers that indicate a transient network outage on a connected
+    # UDP socket.  When received, the socket must be recreated because Linux
+    # caches the ICMP error and returns it on every subsequent send, even after
+    # connectivity is restored.
+    _NETWORK_ERRORS = frozenset((
+        errno.EHOSTUNREACH,   # 113 No route to host
+        errno.ENETUNREACH,    # 101 Network is unreachable
+        errno.ECONNREFUSED,   # 111 Connection refused (ICMP port unreachable)
+        errno.EHOSTDOWN,      # 112 Host is down
+        errno.ETIMEDOUT,      # 110 Connection timed out
+        errno.ENETDOWN,       # 100 Network is down
+    ))
+
+    def error_received(self, exc):
+        if isinstance(exc, OSError) and exc.errno in self._NETWORK_ERRORS:
+            lg.warning("UDP network error (%s) — will recreate socket", exc)
+            if self.reconnect_event is not None:
+                self.reconnect_event.set()
+        else:
+            lg.debug("UDP socket error: %s", exc)
+
     async def listener(self):
+        """Create (and recreate after network outages) the UDP datagram endpoint."""
+        _RECONNECT_DELAY = 2.0  # seconds to wait before recreating socket
 
-        # create a UDP listener
-        self.transport, self.protocol = await self.loop.create_datagram_endpoint(
-            lambda: self, remote_addr=(self.server_address, self.server_port)
-        )
+        while not self.terminate_event.is_set():
 
-        #self.transport._sock.settimeout(self.acknowledge_timeout)
+            # (re)create the UDP datagram endpoint
+            try:
+                self.transport, self.protocol = \
+                    await self.loop.create_datagram_endpoint(
+                        lambda: self,
+                        remote_addr=(self.server_address, self.server_port),
+                    )
+            except OSError as exc:
+                lg.warning(
+                    "could not create UDP endpoint: %s — retrying in %.1f s",
+                    exc, _RECONNECT_DELAY,
+                )
+                try:
+                    await ai.wait_for(
+                        self.terminate_event.wait(), timeout=_RECONNECT_DELAY
+                    )
+                except ai.TimeoutError:
+                    pass
+                continue
 
-        # run until task termination signal
-        try:
-            await self.terminate_event.wait()
-        except:
-            lg.exception("")
-        finally:
-            self.transport.close()
+            lg.debug("UDP endpoint ready")
+            self.reconnect_event.clear()
+
+            # Wait until termination or a socket error signals reconnect is needed
+            terminate_task = ai.create_task(self.terminate_event.wait())
+            reconnect_task = ai.create_task(self.reconnect_event.wait())
+            done, pending = await ai.wait(
+                {terminate_task, reconnect_task},
+                return_when=ai.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except ai.CancelledError:
+                    pass
+
+            # Always close the broken/used transport before looping or exiting
+            try:
+                self.transport.close()
+            except Exception:
+                pass
+            self.transport = None
+
+            if self.terminate_event.is_set():
+                break
+
+            # reconnect_event fired: brief pause then recreate socket
+            lg.info(
+                "network error detected — recreating UDP socket in %.1f s",
+                _RECONNECT_DELAY,
+            )
+            self.reconnect_event.clear()
+            try:
+                await ai.wait_for(
+                    self.terminate_event.wait(), timeout=_RECONNECT_DELAY
+                )
+            except ai.TimeoutError:
+                pass
 
     async def sender(self):
 
@@ -158,6 +230,10 @@ class NetworkClient(nc.Protocol):
 
             # send data request
             lg.debug("sending data request (seq_num=%d)", self.send_seq_num)
+            if self.transport is None:
+                lg.debug("transport not ready (reconnecting), skipping send")
+                self.last_request_time = tm.time()
+                continue
             self.transport.sendto(
                 nc.data_query_packet.pack(
                     nc.PacketTypeCode.DATA_QUERY.value, self.send_seq_num, 1
@@ -235,13 +311,13 @@ class NetworkClient(nc.Protocol):
                 self.loop = ai.get_event_loop()
                 self.terminate_event = ai.Event()
                 self.acknowledge_received = ai.Event()
+                self.reconnect_event = ai.Event()
                 if self.terminate_requested:
                     self.terminate_event.set()
                 self.task_listener = tg.create_task(self.listener())
                 self.task_sender = tg.create_task(self.sender())
         except:
             lg.exception("")
-            self.terminate()
 
     def main(self):
         try:
@@ -249,6 +325,5 @@ class NetworkClient(nc.Protocol):
                 runner.run(self.run())
         except:
             lg.exception("")
-            self.terminate()
 
 #### END

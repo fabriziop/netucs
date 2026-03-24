@@ -24,7 +24,7 @@ MAX_UDP_SIZE = 65507  # https://en.wikipedia.org/wiki/User_Datagram_Protocol
 
 # Exponential backoff default parameters
 BACKOFF_MIN_PERIOD = 1.0  # Minimum backoff delay in seconds
-BACKOFF_MAX_PERIOD = 60.0  # Maximum backoff delay in seconds
+BACKOFF_MAX_PERIOD = 20.0  # Maximum backoff delay in seconds
 BACKOFF_TIME_CONSTANT = 2.0  # Exponential growth factor
 BACKOFF_VARIANCE = 0.1  # Gaussian noise variance as fraction of base delay
 
@@ -115,10 +115,12 @@ class Protocol(ai.DatagramProtocol):
         lg.debug("UDP socket error (expected when server unreachable): %s", exc)
 
     def connection_lost(self, exc):
-        # Only terminate on actual connection loss
+        # Never auto-terminate here: shutdown is controlled by application
+        # via explicit terminate() command.
         if exc:
             lg.warning("Connection lost with error: %s", exc)
-        self.terminate()
+        else:
+            lg.debug("Connection closed")
 
 
 #### END

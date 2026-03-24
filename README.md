@@ -136,10 +136,10 @@ NetworkServer(address, port, client_lifetime, data_queue)
 **main()**
 - Starts the server (blocking call)
 - Creates UDP listener and data sender coroutines
-- Runs until interrupted or error occurs
+- Runs until `terminate()` is called by the application
 
 **terminate()**
-- Signals server termination (internal use)
+- Signals server termination (application command)
 
 **datagram_received(data, addr)**
 - Callback for incoming UDP datagrams (internal use)
@@ -179,10 +179,10 @@ NetworkClient(server_address, server_port, client_lifetime,
 **main()**
 - Starts the client (blocking call)
 - Creates UDP listener and request sender coroutines
-- Runs until interrupted or error occurs
+- Runs until `terminate()` is called by the application
 
 **terminate()**
-- Signals client termination (internal use)
+- Signals client termination (application command)
 
 **datagram_received(data, addr)**
 - Callback for incoming UDP datagrams (internal use)
@@ -396,8 +396,11 @@ client.log_level(logging.DEBUG)
 
 Both client and server include try-except blocks to:
 - Log exceptions with full tracebacks
-- Gracefully terminate on errors
 - Preserve state during recoverable errors
+
+Note: runtime network errors and transport close events do not
+auto-terminate the process. Shutdown is command-driven through
+explicit `terminate()` calls.
 
 ```python
 try:
