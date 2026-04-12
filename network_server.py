@@ -12,8 +12,10 @@
 # .-
 
 import asyncio as ai
+import errno
 import logging
 import pickle as pk
+import queue as qu
 import socket as sk
 import struct as st
 import time as tm
@@ -29,7 +31,15 @@ class NetworkServer(nc.Protocol):
     an expiration time.
     """
 
-    def __init__(self, address, port, client_lifetime, data_queue):
+    def __init__(
+        self,
+        address,
+        port,
+        client_lifetime,
+        data_queue,
+        fatal_error_callback=None,
+        stopped_callback=None,
+    ):
 
         super().__init__()
         self.address = address
@@ -47,6 +57,8 @@ class NetworkServer(nc.Protocol):
         self.clients = {}
         self.packet_header_size = st.calcsize(nc.HEADER_FMT)
         self.log = lg
+        self.fatal_error_callback = fatal_error_callback
+        self.stopped_callback = stopped_callback
 
     def terminate(self):
         self.terminate_requested = True
@@ -56,6 +68,34 @@ class NetworkServer(nc.Protocol):
             lg.debug("terminate requested before network server startup")
             return
         self.terminate_event.set()
+
+    def _notify_fatal_error(self, exc):
+        """Request full application shutdown on unrecoverable network errors."""
+        if self.fatal_error_callback is None:
+            return
+
+        try:
+            self.fatal_error_callback(exc)
+        except Exception:
+            self.log.exception("fatal error callback failed")
+
+    def _is_bind_address_error(self, exc):
+        """True when UDP bind failed because the local address is not usable."""
+        if not isinstance(exc, OSError):
+            return False
+        if exc.errno == errno.EADDRNOTAVAIL:
+            return True
+        return "Cannot assign requested address" in str(exc)
+
+    def _notify_stopped(self):
+        """Notify host app that the network server loop has exited."""
+        if self.stopped_callback is None:
+            return
+
+        try:
+            self.stopped_callback()
+        except Exception:
+            self.log.exception("network stopped callback failed")
 
     def datagram_received(self, data, addr):
 
@@ -87,7 +127,7 @@ class NetworkServer(nc.Protocol):
                 expiration = now + self.client_lifetime
                 if not addr in self.clients:
                     # get data send period
-                    data_send_period = nc.data_query_payload.unpack(data[4:8])
+                    data_send_period, = nc.data_query_payload.unpack(data[4:8])
                     # queue new client to be added: operation managed by sender.
                     self.clients_to_add.put_nowait(
                         nc.Client(addr, data_send_period, now, expiration)
@@ -99,22 +139,43 @@ class NetworkServer(nc.Protocol):
             self.log.exception("")
 
     async def listener(self):
-
-        # create a UDP listener
-        self.transport, self.protocol = await self.loop.create_datagram_endpoint(
-            lambda: self,
-            local_addr=(self.address, self.port),
-            family=sk.AF_INET,
-            proto=sk.IPPROTO_UDP,
-        )
+        try:
+            self.transport, self.protocol = await self.loop.create_datagram_endpoint(
+                lambda: self,
+                local_addr=(self.address, self.port),
+                family=sk.AF_INET,
+                proto=sk.IPPROTO_UDP,
+            )
+        except OSError as exc:
+            self.log.error(
+                "could not create UDP listener on %s:%s: %s",
+                self.address,
+                self.port,
+                exc,
+            )
+            self.terminate()
+            if self._is_bind_address_error(exc):
+                self._notify_fatal_error(exc)
+            return
+        except Exception as exc:
+            self.log.exception(
+                "unexpected error creating UDP listener on %s:%s",
+                self.address,
+                self.port,
+            )
+            self.terminate()
+            self._notify_fatal_error(exc)
+            return
 
         # run until task termination signal
         try:
             await self.terminate_event.wait()
-        except:
+        except Exception:
             self.log.exception("")
         finally:
-            self.transport.close()
+            if self.transport is not None:
+                self.transport.close()
+                self.transport = None
 
     async def sender(self):
 
@@ -130,14 +191,14 @@ class NetworkServer(nc.Protocol):
                 self.clients[client.addr] = client
                 self.log.info("added client %s to client list",client.addr)
 
-            # if no data to send, wait a while releasing execution to
-            # listener and other coroutines the restart cycle.
-            if self.data_queue.empty():
-                await ai.sleep(0.1)
+            # Block on marker queue with timeout to periodically check termination.
+            try:
+                marker_data = await ai.to_thread(self.data_queue.get, True, 0.1)
+            except qu.Empty:
                 continue
 
-            # there is data to send, get and serialize it
-            data = pk.dumps(self.data_queue.get())
+            # Serialize marker for UDP payload.
+            data = pk.dumps(marker_data)
 
             # check for max allowed size
             if len(data) > nc.MAX_UDP_SIZE - self.packet_header_size:
@@ -174,6 +235,7 @@ class NetworkServer(nc.Protocol):
                 self.transport.sendto(data_to_send, addr)
                 self.send_seq_num += 1
                 self.send_seq_num &= 0x7FFF
+                client.data_send = now + float(client.data_send_period) - 1.1
 
     async def run(self):
         try:
@@ -184,13 +246,15 @@ class NetworkServer(nc.Protocol):
                     self.terminate_event.set()
                 self.task_listener = tg.create_task(self.listener())
                 self.task_sender = tg.create_task(self.sender())
-        except:
+        except Exception:
             self.log.exception("")
+        finally:
+            self._notify_stopped()
 
     def main(self):
         try:
             ai.run(self.run())
-        except:
+        except Exception:
             self.log.exception("")
 
 #### END

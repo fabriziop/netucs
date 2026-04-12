@@ -76,7 +76,7 @@ class Client:
 
     addr: str
     data_send_period: float
-    data_send: int
+    data_send: float
     expiration: float
 
 
