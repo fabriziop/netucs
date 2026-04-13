@@ -72,7 +72,14 @@ class NetworkClient(nc.Protocol):
         if self.terminate_event is None:
             lg.debug("terminate requested before network client startup")
             return
-        self.terminate_event.set()
+        try:
+            if self.loop is not None and self.loop.is_running():
+                self.loop.call_soon_threadsafe(self.terminate_event.set)
+            else:
+                self.terminate_event.set()
+        except RuntimeError:
+            # Fallback for race windows while event loop is shutting down.
+            self.terminate_event.set()
 
     def _calculate_backoff_delay(self):
         """Calculate exponential backoff with noise.
@@ -308,7 +315,7 @@ class NetworkClient(nc.Protocol):
     async def run(self):
         try:
             async with ai.TaskGroup() as tg:
-                self.loop = ai.get_event_loop()
+                self.loop = ai.get_running_loop()
                 self.terminate_event = ai.Event()
                 self.acknowledge_received = ai.Event()
                 self.reconnect_event = ai.Event()
