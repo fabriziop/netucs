@@ -16,6 +16,7 @@ import errno
 import logging
 import pickle as pk
 import queue as qu
+import random as rd
 import socket as sk
 import struct as st
 import time as tm
@@ -37,6 +38,10 @@ class NetworkServer(nc.Protocol):
         port,
         client_lifetime,
         data_queue,
+        backoff_min_period=nc.BACKOFF_MIN_PERIOD,
+        backoff_max_period=nc.BACKOFF_MAX_PERIOD,
+        backoff_time_constant=nc.BACKOFF_TIME_CONSTANT,
+        backoff_variance=nc.BACKOFF_VARIANCE,
         fatal_error_callback=None,
         stopped_callback=None,
     ):
@@ -59,6 +64,11 @@ class NetworkServer(nc.Protocol):
         self.log = lg
         self.fatal_error_callback = fatal_error_callback
         self.stopped_callback = stopped_callback
+        self.backoff_min_period = backoff_min_period
+        self.backoff_max_period = backoff_max_period
+        self.backoff_time_constant = backoff_time_constant
+        self.backoff_variance = backoff_variance
+        self.listener_backoff_retry_count = 0
 
     def terminate(self):
         self.terminate_requested = True
@@ -87,6 +97,26 @@ class NetworkServer(nc.Protocol):
             return True
         return "Cannot assign requested address" in str(exc)
 
+    def _is_listener_create_retryable(self, exc):
+        """True when listener endpoint create failure is likely transient."""
+        if not isinstance(exc, OSError):
+            return False
+        return exc.errno in (
+            errno.ENETDOWN,
+            errno.ENETUNREACH,
+            errno.EHOSTDOWN,
+            errno.ETIMEDOUT,
+        )
+
+    def _calculate_backoff_delay(self, retry_count):
+        """Calculate bounded exponential backoff with gaussian noise."""
+        base_delay = self.backoff_min_period * (
+            self.backoff_time_constant ** retry_count
+        )
+        noise = rd.gauss(0, self.backoff_variance * base_delay)
+        delay = base_delay + noise
+        return max(self.backoff_min_period, min(self.backoff_max_period, delay))
+
     def _notify_stopped(self):
         """Notify host app that the network server loop has exited."""
         if self.stopped_callback is None:
@@ -108,7 +138,7 @@ class NetworkServer(nc.Protocol):
             # if it is a data query packet ...
             # not data query packets are silently discarded
             if packet_type == nc.PacketTypeCode["DATA_QUERY"].value:
-                self.log.info("received data request from %s}", addr)
+                self.log.info("received data request from %s", addr)
 
                 # send acknowledge to client
                 packet = nc.acknowledge_packet.pack(
@@ -139,32 +169,60 @@ class NetworkServer(nc.Protocol):
             self.log.exception("")
 
     async def listener(self):
-        try:
-            self.transport, self.protocol = await self.loop.create_datagram_endpoint(
-                lambda: self,
-                local_addr=(self.address, self.port),
-                family=sk.AF_INET,
-                proto=sk.IPPROTO_UDP,
-            )
-        except OSError as exc:
-            self.log.error(
-                "could not create UDP listener on %s:%s: %s",
-                self.address,
-                self.port,
-                exc,
-            )
-            self.terminate()
-            if self._is_bind_address_error(exc):
+        while not self.terminate_event.is_set():
+            try:
+                self.transport, self.protocol = (
+                    await self.loop.create_datagram_endpoint(
+                        lambda: self,
+                        local_addr=(self.address, self.port),
+                        family=sk.AF_INET,
+                        proto=sk.IPPROTO_UDP,
+                    )
+                )
+                self.listener_backoff_retry_count = 0
+                break
+            except OSError as exc:
+                if self._is_bind_address_error(exc) or (
+                    not self._is_listener_create_retryable(exc)
+                ):
+                    self.log.error(
+                        "could not create UDP listener on %s:%s: %s",
+                        self.address,
+                        self.port,
+                        exc,
+                    )
+                    self.terminate()
+                    self._notify_fatal_error(exc)
+                    return
+
+                delay = self._calculate_backoff_delay(
+                    self.listener_backoff_retry_count
+                )
+                self.log.warning(
+                    "could not create UDP listener on %s:%s: %s; "
+                    "retrying in %.2f s (retry count: %d)",
+                    self.address,
+                    self.port,
+                    exc,
+                    delay,
+                    self.listener_backoff_retry_count,
+                )
+                self.listener_backoff_retry_count += 1
+                try:
+                    await ai.wait_for(self.terminate_event.wait(), timeout=delay)
+                except ai.TimeoutError:
+                    pass
+            except Exception as exc:
+                self.log.exception(
+                    "unexpected error creating UDP listener on %s:%s",
+                    self.address,
+                    self.port,
+                )
+                self.terminate()
                 self._notify_fatal_error(exc)
-            return
-        except Exception as exc:
-            self.log.exception(
-                "unexpected error creating UDP listener on %s:%s",
-                self.address,
-                self.port,
-            )
-            self.terminate()
-            self._notify_fatal_error(exc)
+                return
+
+        if self.transport is None:
             return
 
         # run until task termination signal
@@ -184,6 +242,11 @@ class NetworkServer(nc.Protocol):
 
         # loop until termination required
         while not self.terminate_event.is_set():
+
+            # Listener may have already closed the endpoint.
+            if self.transport is None:
+                self.log.debug("sender exiting: UDP transport not available")
+                return
 
             # add client if any, to active clients.
             while not self.clients_to_add.empty():
@@ -232,7 +295,19 @@ class NetworkServer(nc.Protocol):
                     self.send_seq_num,
                 )
                 data_to_send += data
-                self.transport.sendto(data_to_send, addr)
+                # Transport can become None/closed while sender is running.
+                if self.transport is None:
+                    self.log.debug("sender stopping: UDP transport closed")
+                    return
+                try:
+                    self.transport.sendto(data_to_send, addr)
+                except (AttributeError, RuntimeError, OSError) as exc:
+                    if self.terminate_event.is_set():
+                        self.log.debug("sender send aborted during shutdown: %s", exc)
+                        return
+                    self.log.warning("sender send failed (%s), stopping sender", exc)
+                    self.terminate()
+                    return
                 self.send_seq_num += 1
                 self.send_seq_num &= 0x7FFF
                 client.data_send = now + float(client.data_send_period) - 1.1

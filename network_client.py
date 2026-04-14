@@ -64,6 +64,7 @@ class NetworkClient(nc.Protocol):
         self.backoff_time_constant = backoff_time_constant
         self.backoff_variance = backoff_variance
         self.backoff_retry_count = 0
+        self.listener_backoff_retry_count = 0
 
     def terminate(self):
         self.terminate_requested = True
@@ -81,14 +82,14 @@ class NetworkClient(nc.Protocol):
             # Fallback for race windows while event loop is shutting down.
             self.terminate_event.set()
 
-    def _calculate_backoff_delay(self):
+    def _calculate_backoff_delay(self, retry_count):
         """Calculate exponential backoff with noise.
 
         Formula: delay = min(max_period, min_period * (time_constant ^ retry_count) + noise)
         where noise is gaussian with variance parameter.
         """
         # Calculate exponential base delay
-        base_delay = self.backoff_min_period * (self.backoff_time_constant ** self.backoff_retry_count)
+        base_delay = self.backoff_min_period * (self.backoff_time_constant ** retry_count)
 
         # Add gaussian noise with standard deviation = backoff_variance * base_delay
         noise = rd.gauss(0, self.backoff_variance * base_delay)
@@ -98,6 +99,10 @@ class NetworkClient(nc.Protocol):
         delay = max(self.backoff_min_period, min(self.backoff_max_period, delay))
 
         return delay
+
+    def _is_endpoint_create_retryable(self, exc):
+        """True when UDP endpoint create failure is transient."""
+        return isinstance(exc, OSError) and exc.errno in self._NETWORK_ERRORS
 
 
     def datagram_received(self, data, addr):
@@ -140,8 +145,6 @@ class NetworkClient(nc.Protocol):
 
     async def listener(self):
         """Create (and recreate after network outages) the UDP datagram endpoint."""
-        _RECONNECT_DELAY = 2.0  # seconds to wait before recreating socket
-
         while not self.terminate_event.is_set():
 
             # (re)create the UDP datagram endpoint
@@ -152,20 +155,36 @@ class NetworkClient(nc.Protocol):
                         remote_addr=(self.server_address, self.server_port),
                     )
             except OSError as exc:
-                lg.warning(
-                    "could not create UDP endpoint: %s — retrying in %.1f s",
-                    exc, _RECONNECT_DELAY,
+                if not self._is_endpoint_create_retryable(exc):
+                    lg.error("could not create UDP endpoint: %s", exc)
+                    self.terminate()
+                    raise
+                delay = self._calculate_backoff_delay(
+                    self.listener_backoff_retry_count
                 )
+                lg.warning(
+                    "could not create UDP endpoint: %s — retrying in %.2f s"
+                    " (retry count: %d)",
+                    exc,
+                    delay,
+                    self.listener_backoff_retry_count,
+                )
+                self.listener_backoff_retry_count += 1
                 try:
                     await ai.wait_for(
-                        self.terminate_event.wait(), timeout=_RECONNECT_DELAY
+                        self.terminate_event.wait(), timeout=delay
                     )
                 except ai.TimeoutError:
                     pass
                 continue
+            except Exception:
+                lg.exception("unexpected error creating UDP endpoint")
+                self.terminate()
+                raise
 
             lg.debug("UDP endpoint ready")
             self.reconnect_event.clear()
+            self.listener_backoff_retry_count = 0
 
             # Wait until termination or a socket error signals reconnect is needed
             terminate_task = ai.create_task(self.terminate_event.wait())
@@ -191,15 +210,21 @@ class NetworkClient(nc.Protocol):
             if self.terminate_event.is_set():
                 break
 
-            # reconnect_event fired: brief pause then recreate socket
-            lg.info(
-                "network error detected — recreating UDP socket in %.1f s",
-                _RECONNECT_DELAY,
+            # reconnect_event fired: backoff, then recreate socket
+            delay = self._calculate_backoff_delay(
+                self.listener_backoff_retry_count
             )
+            lg.info(
+                "network error detected — recreating UDP socket in %.2f s"
+                " (retry count: %d)",
+                delay,
+                self.listener_backoff_retry_count,
+            )
+            self.listener_backoff_retry_count += 1
             self.reconnect_event.clear()
             try:
                 await ai.wait_for(
-                    self.terminate_event.wait(), timeout=_RECONNECT_DELAY
+                    self.terminate_event.wait(), timeout=delay
                 )
             except ai.TimeoutError:
                 pass
@@ -241,12 +266,22 @@ class NetworkClient(nc.Protocol):
                 lg.debug("transport not ready (reconnecting), skipping send")
                 self.last_request_time = tm.time()
                 continue
-            self.transport.sendto(
-                nc.data_query_packet.pack(
-                    nc.PacketTypeCode.DATA_QUERY.value, self.send_seq_num, 1
-                ),
-                (self.server_address, self.server_port),
-            )
+            try:
+                self.transport.sendto(
+                    nc.data_query_packet.pack(
+                        nc.PacketTypeCode.DATA_QUERY.value, self.send_seq_num, 1
+                    ),
+                    (self.server_address, self.server_port),
+                )
+            except (AttributeError, RuntimeError, OSError) as exc:
+                if self.terminate_event.is_set():
+                    lg.debug("sender send aborted during shutdown: %s", exc)
+                    break
+                lg.warning("send request failed (%s), scheduling reconnect", exc)
+                if self.reconnect_event is not None:
+                    self.reconnect_event.set()
+                self.last_request_time = tm.time()
+                continue
             self.last_request_time = tm.time()
             self.send_seq_num += 1
             self.send_seq_num &= 0x7FFF
@@ -272,7 +307,9 @@ class NetworkClient(nc.Protocol):
                 self.acknowledge_received.clear()
 
                 # Calculate and apply exponential backoff with noise
-                backoff_delay = self._calculate_backoff_delay()
+                backoff_delay = self._calculate_backoff_delay(
+                    self.backoff_retry_count
+                )
                 lg.info("applying exponential backoff: %.3f seconds (retry count: %d)",
                              backoff_delay, self.backoff_retry_count)
 
