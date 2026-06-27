@@ -10,7 +10,7 @@
 # .license    : all right reserved
 # .-
 
-from setuptools import setup, find_packages
+from setuptools import setup
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
@@ -24,7 +24,8 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/fabriziop/netucs",
-    packages=find_packages(),
+    package_dir={"netucs": "src"},
+    packages=["netucs"],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",

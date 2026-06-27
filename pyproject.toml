@@ -47,3 +47,6 @@ classifiers = [
 
 [tool.setuptools]
 packages = ["netucs"]
+
+[tool.setuptools.package-dir]
+netucs = "src"
