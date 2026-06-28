@@ -13,6 +13,7 @@
 import asyncio as ai
 from dataclasses import dataclass
 import enum as en
+import errno
 import logging
 import struct as st
 
@@ -27,6 +28,19 @@ BACKOFF_MIN_PERIOD = 1.0  # Minimum backoff delay in seconds
 BACKOFF_MAX_PERIOD = 20.0  # Maximum backoff delay in seconds
 BACKOFF_TIME_CONSTANT = 2.0  # Exponential growth factor
 BACKOFF_VARIANCE = 0.1  # Gaussian noise variance as fraction of base delay
+
+# OS error numbers that indicate a transient network outage on a connected
+# UDP socket.  When received, the socket must be recreated because Linux
+# caches the ICMP error and returns it on every subsequent send, even after
+# connectivity is restored.
+_NETWORK_ERRORS = frozenset((
+    errno.EHOSTUNREACH,   # 113 No route to host
+    errno.ENETUNREACH,    # 101 Network is unreachable
+    errno.ECONNREFUSED,   # 111 Connection refused (ICMP port unreachable)
+    errno.EHOSTDOWN,      # 112 Host is down
+    errno.ETIMEDOUT,      # 110 Connection timed out
+    errno.ENETDOWN,       # 100 Network is down
+))
 
 
 # packet types

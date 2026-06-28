@@ -17,7 +17,7 @@ import struct as st
 import time as tm
 import random as rd
 
-from . import network_common as nc
+import network_common as nc
 
 lg = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ class NetworkClient(nc.Protocol):
 
     def _is_endpoint_create_retryable(self, exc):
         """True when UDP endpoint create failure is transient."""
-        return isinstance(exc, OSError) and exc.errno in self._NETWORK_ERRORS
+        return isinstance(exc, OSError) and exc.errno in nc._NETWORK_ERRORS
 
 
     def datagram_received(self, data, addr):
@@ -122,21 +122,8 @@ class NetworkClient(nc.Protocol):
             # stop acknowledge timeout
             self.acknowledge_received.set()
 
-    # OS error numbers that indicate a transient network outage on a connected
-    # UDP socket.  When received, the socket must be recreated because Linux
-    # caches the ICMP error and returns it on every subsequent send, even after
-    # connectivity is restored.
-    _NETWORK_ERRORS = frozenset((
-        errno.EHOSTUNREACH,   # 113 No route to host
-        errno.ENETUNREACH,    # 101 Network is unreachable
-        errno.ECONNREFUSED,   # 111 Connection refused (ICMP port unreachable)
-        errno.EHOSTDOWN,      # 112 Host is down
-        errno.ETIMEDOUT,      # 110 Connection timed out
-        errno.ENETDOWN,       # 100 Network is down
-    ))
-
     def error_received(self, exc):
-        if isinstance(exc, OSError) and exc.errno in self._NETWORK_ERRORS:
+        if isinstance(exc, OSError) and exc.errno in nc._NETWORK_ERRORS:
             lg.warning("UDP network error (%s) — will recreate socket", exc)
             if self.reconnect_event is not None:
                 self.reconnect_event.set()
@@ -360,8 +347,14 @@ class NetworkClient(nc.Protocol):
                     self.terminate_event.set()
                 self.task_listener = tg.create_task(self.listener())
                 self.task_sender = tg.create_task(self.sender())
-        except:
+        except ai.CancelledError:
+            lg.debug("Client run cancelled.")
+        except Exception:
             lg.exception("")
+
+    def shutdown(self):
+        """Gracefully shutdown the client."""
+        self.terminate()
 
     def main(self):
         try:

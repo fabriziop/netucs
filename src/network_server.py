@@ -21,7 +21,7 @@ import socket as sk
 import struct as st
 import time as tm
 
-from . import network_common as nc
+import network_common as nc
 
 lg = logging.getLogger(__name__)
 
@@ -325,6 +325,10 @@ class NetworkServer(nc.Protocol):
             self.log.exception("")
         finally:
             self._notify_stopped()
+
+    def shutdown(self):
+        """Gracefully shutdown the server."""
+        self.terminate()
 
     def main(self):
         try:
