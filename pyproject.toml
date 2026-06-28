@@ -9,15 +9,18 @@
 # .license    : all right reserved
 # .-
 
+
+
+
 [build-system]
-requires = ["setuptools>=45", "wheel"]
+requires = ["setuptools>=64", "setuptools-scm[simple]>=8"."wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "netucs"
-version = "1.0.0"
 description = "Network UDP Client Server data exchange - asynchronous client/server UDP communication"
 readme = "README.md"
+dynamic = ["version"]
 requires-python = ">=3.8"
 license = {text = "GPLv3"}
 authors = [

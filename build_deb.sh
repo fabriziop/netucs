@@ -3,7 +3,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+# Get version from git tag, removing the 'v' prefix
+VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
+if [ -z "$VERSION" ]; then
+    echo "Error: No git tag found. Please create a tag (e.g., git tag -a v1.0.0 -m 'Version 1.0.0')."
+    exit 1
+fi
+
+# Update version in debian/changelog if it exists
+if [ -f "debian/changelog" ]; then
+    dch -v "${VERSION}-1" "New upstream release."
+fi
+
 PKG=python3-netucs
 REL=1
 ARCH=all
@@ -43,7 +54,7 @@ find "$STAGE/usr" -type f -exec chmod 0644 {} +
 chmod 0755 "$STAGE/DEBIAN"
 chmod 0644 "$STAGE/DEBIAN/control"
 
-rm -f "$OUT"
+rm -f "${PKG}_*_${ARCH}.deb"
 dpkg-deb --build --root-owner-group "$STAGE" "$OUT"
 
 echo "Built package: $OUT"
