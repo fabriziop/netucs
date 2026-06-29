@@ -20,24 +20,44 @@ The package implements a request-response pattern where:
 - **Serializable Data Support**: Uses pickle to serialize arbitrary Python objects for transmission
 - **Configurable Timeouts**: Fine-grained control over client lifetime and request/response timing
 - **Logging Integration**: Comprehensive logging at multiple levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-- **Protocol Versioning**: Structured packet format with sequence numbers for ordering
+- **Packet Typing**: Uses a `PacketTypeCode` to distinguish between message types (e.g., data queries, responses, acknowledgments), ensuring clients and servers can correctly interpret incoming data.
 
 ## Installation
 
+### Building/Installing Debian Package
+
+To build a `.deb` package for easy installation on Debian-based systems (like Ubuntu), use the provided build script.
+
+1.  **Navigate to the project directory**:
+    ```bash
+    cd /path/to/your/netucs_project
+    ```
+
+2.  **Ensure the script is executable**:
+    ```bash
+    chmod +x build_deb.sh
+    ```
+
+3.  **Run the build script**:
+    ```bash
+    ./build_deb.sh
+    ```
+    This script will handle the entire build process and create a `.deb` file in a `debpkg` or similar directory.
+
+4.  **Install the package**:
+    You can then install the generated package on your target machine using `dpkg`.
+    ```bash
+    sudo dpkg -i <path_to_generated_deb_file>
+    ```
+
 ### From Source
 
-1. Place the `netucs` package in your Python project directory or in your Python path:
+Place the `netucs` package in your Python project directory or in your Python path:
 
 ```bash
 # If in the main directory structure
 from netucs import network_client as nc
 from netucs import network_server as ns
-```
-
-2. Ensure dependencies are installed:
-
-```bash
-pip install python>=3.8  # asyncio is built-in
 ```
 
 No external dependencies required - netucs uses only Python standard library modules.
@@ -121,7 +141,7 @@ UDP server that distributes data to registered clients on request.
 NetworkServer(address, port, client_lifetime, data_queue)
 ```
 
-- **address** (str): IP address to bind to (e.g., '0.0.0.0', '127.0.0.1')
+- **address** (str): IP address to bind to (e.g., 192.168.1.100, '127.0.0.1')
 - **port** (int): UDP port number to listen on
 - **client_lifetime** (float): Time in seconds before a client is considered expired
 - **data_queue** (queue.Queue): Queue from which data items are retrieved for distribution
@@ -304,7 +324,7 @@ client = NetworkClient(data_queue=data_out, **CLIENT_CONFIG)
 ```python
 # Server: Short timeout for responsive client cleanup
 server = ns.NetworkServer(
-    address='0.0.0.0',
+    address='192.168.1.100',
     port=5000,
     client_lifetime=5,  # 5 second lifetime
     data_queue=data_in
@@ -326,7 +346,7 @@ client = nc.NetworkClient(
 ```python
 # Server: Long timeout for stable connections
 server = ns.NetworkServer(
-    address='0.0.0.0',
+    address='192.168.1.100',
     port=5000,
     client_lifetime=300,  # 5 minute lifetime
     data_queue=data_in
