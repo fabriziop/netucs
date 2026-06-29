@@ -10,9 +10,9 @@
 # .license    : all right reserved
 # .-
 
-from network_common import *
-from network_server import *
-from network_client import *
+from . network_common import *
+from . network_server import *
+from . network_client import *
 
 import concurrent.futures as cf
 import logging

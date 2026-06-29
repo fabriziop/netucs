@@ -21,7 +21,7 @@ import socket as sk
 import struct as st
 import time as tm
 
-import network_common as nc
+from . import network_common as nc
 
 lg = logging.getLogger(__name__)
 
