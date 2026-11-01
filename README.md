@@ -127,7 +127,7 @@ while True:
 
 ### Client-Server Example
 
-See `netucs/network_test.py` for a complete working example with producer/consumer patterns.
+See `netucs/src/network_test.py` for a complete working example with producer/consumer patterns.
 
 ## Detailed API
 

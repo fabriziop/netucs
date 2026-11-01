@@ -49,7 +49,6 @@ classifiers = [
 "Source" = "https://github.com/fabriziop/netucs"
 
 [tool.setuptools]
+package-dir = {"" = "src"}
 packages = ["netucs"]
 
-[tool.setuptools.package-dir]
-netucs = "src"
