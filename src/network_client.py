@@ -106,7 +106,8 @@ class NetworkClient(nc.Protocol):
 
 
     def datagram_received(self, data, addr):
-        super().datagram_received(data, addr)
+        if not super().datagram_received(data, addr):
+            return
 
         # process data response
         if self.receive_packet_type == nc.PacketTypeCode["DATA_RESPONSE"].value:
@@ -256,6 +257,7 @@ class NetworkClient(nc.Protocol):
             try:
                 self.transport.sendto(
                     nc.data_query_packet.pack(
+                        nc.PROTOCOL_VERSION,
                         nc.PacketTypeCode.DATA_QUERY.value, self.send_seq_num, 1
                     ),
                     (self.server_address, self.server_port),

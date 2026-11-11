@@ -235,15 +235,31 @@ Contains shared protocol definitions and data structures.
 
 | Packet Type | Fields | Size |
 |-------------|--------|------|
-| Header | type (int16), seq_num (int16) | 4 bytes |
-| Data Query | type, seq_num, response_period (int32) | 8 bytes |
-| Data Response | type, seq_num, [serialized data] | 4+ bytes |
-| Acknowledge | type, seq_num, ack_seq_num (int16), padding | 8 bytes |
+| Header | protocol_version (uint8), type (int16), seq_num (int16) | 5 bytes |
+| Data Query | header, response_period (int32) | 9 bytes |
+| Data Response | header, serialized data | 5 bytes + payload |
+| Acknowledge | header, ack_seq_num (int16), padding (2 bytes) | 9 bytes |
 
 **Constants**
 - `MAX_UDP_SIZE = 65507`: Maximum UDP datagram size
 
 ## Protocol Details
+
+### Protocol Version
+
+`network_common.PROTOCOL_VERSION = 1` is an unsigned one-byte field at the
+start of every query, acknowledgment, and data response. All multi-byte fields
+use network byte order (big-endian).
+
+This version is independent of the code/package release version. Increment it
+only when changing the packet format or handshake, not for ordinary code fixes
+or releases. Values are 1 through 255; do not wrap or reuse versions.
+
+Both endpoints discard packets whose version differs from their own and log
+the mismatch before processing the payload. No version negotiation is performed.
+Malformed or truncated headers, queries, and acknowledgments are also discarded.
+The previous unversioned format is incompatible: upgrade client and server
+together. A version mismatch cannot register a client or satisfy an acknowledgment.
 
 ### Exponential Backoff with Noise
 

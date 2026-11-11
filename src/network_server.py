@@ -130,10 +130,11 @@ class NetworkServer(nc.Protocol):
     def datagram_received(self, data, addr):
 
         try:
-            super().datagram_received(data, addr)
+            if not super().datagram_received(data, addr):
+                return
 
-            # get packet header
-            packet_type, receive_seq_num = nc.packet_header.unpack(data[0:4])
+            packet_type = self.receive_packet_type
+            receive_seq_num = self.receive_seq_num
 
             # if it is a data query packet ...
             # not data query packets are silently discarded
@@ -142,6 +143,7 @@ class NetworkServer(nc.Protocol):
 
                 # send acknowledge to client
                 packet = nc.acknowledge_packet.pack(
+                    nc.PROTOCOL_VERSION,
                     nc.PacketTypeCode["ACKNOWLEDGE"].value,
                     self.send_seq_num,
                     receive_seq_num,
@@ -157,7 +159,7 @@ class NetworkServer(nc.Protocol):
                 expiration = now + self.client_lifetime
                 if not addr in self.clients:
                     # get data send period
-                    data_send_period, = nc.data_query_payload.unpack(data[4:8])
+                    data_send_period, = nc.data_query_payload.unpack_from(data, self.packet_header_size)
                     # queue new client to be added: operation managed by sender.
                     self.clients_to_add.put_nowait(
                         nc.Client(addr, data_send_period, now, expiration)
@@ -287,10 +289,11 @@ class NetworkServer(nc.Protocol):
 
                 # send data to current client
                 self.log.info("sending data to client %s",client.addr)
-                data_to_send = bytearray(4)
+                data_to_send = bytearray(self.packet_header_size)
                 nc.data_response_packet.pack_into(
                     data_to_send,
                     0,
+                    nc.PROTOCOL_VERSION,
                     nc.PacketTypeCode["DATA_RESPONSE"].value,
                     self.send_seq_num,
                 )

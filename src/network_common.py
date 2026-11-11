@@ -21,6 +21,10 @@ lg = logging.getLogger(__name__)
 
 ## client/server protocol
 
+# Independent of the code/package release version. Increment only when the
+# wire packet format or handshake changes; valid versions are 1..255.
+PROTOCOL_VERSION = 1
+
 MAX_UDP_SIZE = 65507  # https://en.wikipedia.org/wiki/User_Datagram_Protocol
 
 # Exponential backoff default parameters
@@ -52,34 +56,20 @@ class PacketTypeCode(en.Enum):
 
 # packet structures
 
-# packet header: fields common to all packets.
-# 1. packet type, 2 bytes
-# 2. sequence number, 2 bytes
-HEADER_FMT = "!hh"
+# All packets start with: protocol version (unsigned byte), packet type
+# (signed 16-bit), sequence number (signed 16-bit), in network byte order.
+HEADER_FMT = "!Bhh"
 packet_header = st.Struct(HEADER_FMT)
 
-# data query
-# 1. packet type, 2 bytes
-# 2. sequence number, 2 bytes
-# 3. response period, 4 bytes
-data_query_packet = st.Struct("!hhl")
-
-# data query: payload only (all non header).
-# 1. response period, 4 bytes
+# Query payload: response period (signed 32-bit).
+data_query_packet = st.Struct(HEADER_FMT + "l")
 data_query_payload = st.Struct("!l")
 
-# data response: fixed size fields only (data trail fields can have
-# programmable size).
-# 1. packet type, 2 bytes
-# 2. sequence number, 2 bytes
-data_response_packet = st.Struct("!hh")
+# Response payload: serialized application data.
+data_response_packet = st.Struct(HEADER_FMT)
 
-# acknowledge:
-# 1. packet type, 2 bytes
-# 2. sequence number, 2 bytes
-# 3. sequence number of packet to by acknowledged, 2 bytes
-# 4. padding to x4 alignment, 2 bytes
-acknowledge_packet = st.Struct("!hhhxx")
+# ACK payload: acknowledged sequence (signed 16-bit), two padding bytes.
+acknowledge_packet = st.Struct(HEADER_FMT + "hxx")
 
 
 # data client descriptor
@@ -116,11 +106,34 @@ class Protocol(ai.DatagramProtocol):
         self.transport = transport
 
     def datagram_received(self, data, addr):
+        # Reject incompatible packets before interpreting their body or changing
+        # receive state. Legacy unversioned packets are incompatible as well.
+        if not data:
+            return False
+        if data[0] != PROTOCOL_VERSION:
+            lg.warning("Ignoring UDP packet from %s: protocol version %d; expected %d",
+                       addr, data[0], PROTOCOL_VERSION)
+            return False
+        if len(data) < packet_header.size:
+            return False
+        _, packet_type, sequence = packet_header.unpack_from(data)
+        if packet_type == PacketTypeCode.DATA_QUERY.value:
+            if len(data) != data_query_packet.size:
+                return False
+        elif packet_type == PacketTypeCode.ACKNOWLEDGE.value:
+            if len(data) != acknowledge_packet.size:
+                return False
+        elif packet_type == PacketTypeCode.DATA_RESPONSE.value:
+            if len(data) <= packet_header.size:
+                return False
+        else:
+            return False
+
         self.data = data
         self.addr = addr
-
-        # get packet header
-        self.receive_packet_type, self.receive_seq_num = packet_header.unpack(data[0:4])
+        self.receive_packet_type = packet_type
+        self.receive_seq_num = sequence
+        return True
 
     # exc: OS error instance
     def error_received(self, exc):
