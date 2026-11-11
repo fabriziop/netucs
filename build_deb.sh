@@ -8,37 +8,39 @@ if ! command -v dpkg-deb >/dev/null 2>&1; then
   exit 1
 fi
 
-get_release_version() {
-  if ! command -v git >/dev/null 2>&1; then
-    echo "Error: git not found in PATH" >&2
-    return 1
-  fi
-
-  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "Error: this build must be run inside the git work tree" >&2
-    return 1
-  fi
-
-  # Build Debian release packages only from an exactly tagged commit.
-  # This prevents accidentally reusing the previous release tag for newer code.
-  local tag
-  tag=$(git describe --tags --exact-match HEAD 2>/dev/null || true)
-  if [ -z "$tag" ]; then
-    echo "Error: HEAD is not exactly tagged. Create/check out a release tag, e.g.:" >&2
-    echo "  git tag -a v1.0.0 -m 'Version 1.0.0'" >&2
-    return 1
-  fi
-
-  tag=${tag#v}
-
-
-  printf '%s\n' "$tag"
-}
-
-VERSION=$(get_release_version)
+# Shared upstream version for Python and Debian packages.
+VERSION=$(cat VERSION)
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Error: VERSION must contain MAJOR.MINOR.PATCH" >&2
+  exit 1
+fi
 
 PKG=python3-netucs
 REL=1
+COUNTER_FILE=.deb-build-counter
+IS_RELEASE=false
+# Only a clean checkout of a matching release tag gets the release revision.
+if command -v git >/dev/null 2>&1 && \
+   [ "$(git rev-parse --show-toplevel 2>/dev/null || true)" = "$PWD" ] && \
+   [ -n "$(git tag --points-at HEAD --list "$VERSION" "v$VERSION")" ] && \
+   [ -z "$(git --no-optional-locks status --porcelain --untracked-files=all)" ]; then
+  IS_RELEASE=true
+fi
+
+if [ "$IS_RELEASE" = false ]; then
+  counter=0
+  if [ -f "$COUNTER_FILE" ]; then
+    if ! read -r counter_version counter extra < "$COUNTER_FILE" || \
+       [[ ! "$counter" =~ ^(0|[1-9][0-9]{0,8})$ ]] || [ -n "$extra" ]; then
+      echo "Error: invalid $COUNTER_FILE; expected VERSION and a build counter" >&2
+      exit 1
+    fi
+    [ "$counter_version" = "$VERSION" ] || counter=0
+  fi
+  counter=$((counter + 1))
+  REL="${REL}+build${counter}"
+fi
+
 ARCH=all
 STAGE=debian
 OUT=${PKG}_${VERSION}-${REL}_${ARCH}.deb
@@ -102,6 +104,11 @@ chmod 0644 "$STAGE/DEBIAN/control"
 
 rm -f "${PKG}_*_${ARCH}.deb"
 dpkg-deb --build --root-owner-group "$STAGE" "$OUT"
+
+# Count successful development builds only; release builds leave it untouched.
+if [ "$IS_RELEASE" = false ]; then
+  printf '%s %s\n' "$VERSION" "$counter" > "$COUNTER_FILE"
+fi
 
 cleanup_generated
 

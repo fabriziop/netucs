@@ -483,3 +483,48 @@ See the [LICENSE](LICENSE) file for details.
 
 Fabrizio Pollastri <mxgbot@gmail.com>
 Torino, Italy
+
+### Release version
+
+`VERSION` is the single source for the Python and Debian upstream version.
+Update and commit it before a release, then tag that commit with `v` followed
+by its contents. The Debian package adds its packaging revision (for example,
+upstream `0.6.0` becomes Debian `0.6.0-1`). The protocol version is independent.
+
+### Creating a release tag
+
+1. Fetch remote tags with `git fetch --tags` so the local release history is current.
+2. Increase `VERSION` above all existing stable release tags and commit all changes.
+3. Run `python3 release.py --check` to validate without tagging.
+4. Run `python3 release.py` to create an annotated local tag, for example `v0.6.1`.
+5. Push the commit and tag when ready.
+
+The script compares numeric `MAJOR.MINOR.PATCH` versions, accepts existing tags
+with or without `v`, and refuses dirty working trees, duplicate releases, and
+version decreases. Unrelated tags are ignored. New tags always use `v`.
+It does not fetch, commit, or push automatically; checks cover local tags only.
+
+For release CI, fetch the complete tag history, check out the tagged commit, and
+run `python3 release.py --check-tag "$RELEASE_TAG"` before building or publishing.
+Set `RELEASE_TAG` from your CI provider's release-tag event. This validates that
+the tag matches committed `VERSION`, points to HEAD, and exceeds the other
+stable release tags. It is intended for the current release, not rebuilding older
+releases after newer ones have been tagged. Enforce this check in CI and protect
+release tags against deletion or replacement to prevent bypassing local checks.
+
+### Debian development build counter
+
+Run `./build_deb.sh` as usual. Development builds use revisions such as
+`0.6.0-1+build1`, `0.6.0-1+build2`, and so on. A clean checkout whose HEAD
+has tag `v0.6.0` (or legacy `0.6.0`) matching `VERSION` builds `0.6.0-1`.
+Dirty tagged checkouts are development builds too.
+
+The counter is stored locally in `.deb-build-counter`, excluded from Git, and
+advances only after a successful development build. Changing `VERSION` resets
+the next development build to 1. Release builds leave the counter unchanged.
+It is local to this working copy; fresh copies start at 1. Run one build at a time.
+
+Keep the last released `VERSION` during development and increase it when cutting
+the next release. A development revision sorts after its same-version release;
+the next higher upstream release sorts after these development builds. Python
+package versions continue to use `VERSION` without the Debian build counter.

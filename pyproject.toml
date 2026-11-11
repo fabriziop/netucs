@@ -13,7 +13,7 @@
 
 
 [build-system]
-requires = ["setuptools>=64", "setuptools-scm[simple]>=8"."wheel"]
+requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -49,6 +49,8 @@ classifiers = [
 "Source" = "https://github.com/fabriziop/netucs"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = {"netucs" = "src"}
 packages = ["netucs"]
 
+[tool.setuptools.dynamic]
+version = {file = "VERSION"}

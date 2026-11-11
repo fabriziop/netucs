@@ -1,4 +1,7 @@
 include README.md
 include LICENSE
 include pyproject.toml
-recursive-include netucs *.py
+recursive-include src *.py
+include VERSION
+include release.py
+recursive-include tests *.py
