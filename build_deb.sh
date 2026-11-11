@@ -60,13 +60,10 @@ mkdir -p \
   "$PKG_DIR" \
   "$DOC_DIR"
 
-# Install as normal top-level Python modules, matching the source layout.
-# Keep this in sync with [tool.setuptools].py-modules in pyproject.toml.
-# Do not copy src/__init__.py: these are top-level modules, not a package.
+# Install the netucs package, including __init__.py for its relative imports.
 for module in src/*.py; do
   name=$(basename "$module")
-  [ "$name" = "__init__.py" ] && continue
-  cp "$module" "$PY_DIR/$name"
+  cp "$module" "$PKG_DIR/$name"
 done
 
 cp README.md "$DOC_DIR/README.md"
