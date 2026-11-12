@@ -17,7 +17,7 @@ The package implements a request-response pattern where:
 - **UDP-based Communication**: Fast, lightweight datagram protocol suitable for real-time applications
 - **Automatic Client Lifecycle Management**: Clients are automatically registered on first request and expire after a configurable timeout
 - **Request Acknowledgment**: Server acknowledges client requests to ensure communication integrity
-- **Serializable Data Support**: Uses pickle to serialize arbitrary Python objects for transmission
+- **Portable Data Support**: Uses Protocol Buffers for typed, language-independent payloads, including numeric arrays
 - **Configurable Timeouts**: Fine-grained control over client lifetime and request/response timing
 - **Logging Integration**: Comprehensive logging at multiple levels (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 - **Packet Typing**: Uses a `PacketTypeCode` to distinguish between message types (e.g., data queries, responses, acknowledgments), ensuring clients and servers can correctly interpret incoming data.
@@ -42,25 +42,28 @@ To build a `.deb` package for easy installation on Debian-based systems (like Ub
     ```bash
     ./build_deb.sh
     ```
-    This script will handle the entire build process and create a `.deb` file in a `debpkg` or similar directory.
+    The script creates a `.deb` file in the repository root. See the development build counter below.
 
 4.  **Install the package**:
     You can then install the generated package on your target machine using `dpkg`.
     ```bash
-    sudo dpkg -i <path_to_generated_deb_file>
+    sudo apt install ./<generated_deb_file>
     ```
 
 ### From Source
 
-Place the `netucs` package in your Python project directory or in your Python path:
+Install the package and its Protobuf runtime dependency:
 
 ```bash
-# If in the main directory structure
-from netucs import network_client as nc
-from netucs import network_server as ns
+python3 -m pip install .
+# Include numeric array support and the NumPy demo:
+python3 -m pip install '.[numpy]'
 ```
 
-No external dependencies required - netucs uses only Python standard library modules.
+Python requires `protobuf>=3.20.3,<7`. NumPy is optional for ordinary values;
+install the `numpy` extra on both endpoints when sending arrays. The Debian
+package depends on `python3-protobuf` and recommends `python3-numpy`.
+The checked-in Python bindings mean no Protobuf compiler is needed at runtime.
 
 ## Quick Start
 
@@ -84,7 +87,7 @@ server = ns.NetworkServer(
 
 # Set logging level
 import logging
-server.log_level(logging.INFO)
+logging.getLogger('netucs').setLevel(logging.INFO)
 
 # Put some data in the queue
 data_queue.put({'temperature': 23.5, 'humidity': 65})
@@ -114,7 +117,7 @@ client = nc.NetworkClient(
 
 # Set logging level
 import logging
-client.log_level(logging.INFO)
+logging.getLogger('netucs').setLevel(logging.INFO)
 
 # Run client (blocks until terminated)
 client.main()
@@ -147,11 +150,6 @@ NetworkServer(address, port, client_lifetime, data_queue)
 - **data_queue** (queue.Queue): Queue from which data items are retrieved for distribution
 
 #### Methods
-
-**log_level(log_level)**
-- Sets the logging level for the server
-- Parameters:
-  - `log_level`: logging level (logging.DEBUG, logging.INFO, etc.)
 
 **main()**
 - Starts the server (blocking call)
@@ -190,11 +188,6 @@ NetworkClient(server_address, server_port, client_lifetime,
 - **backoff_variance** (float, optional): Gaussian noise variance as fraction of base delay (default: 0.1)
 
 #### Methods
-
-**log_level(log_level)**
-- Sets the logging level for the client
-- Parameters:
-  - `log_level`: logging level (logging.DEBUG, logging.INFO, etc.)
 
 **main()**
 - Starts the client (blocking call)
@@ -237,7 +230,7 @@ Contains shared protocol definitions and data structures.
 |-------------|--------|------|
 | Header | protocol_version (uint8), type (int16), seq_num (int16) | 5 bytes |
 | Data Query | header, response_period (int32) | 9 bytes |
-| Data Response | header, serialized data | 5 bytes + payload |
+| Data Response | header, Protobuf `netucs.Value` | 5 bytes + payload |
 | Acknowledge | header, ack_seq_num (int16), padding (2 bytes) | 9 bytes |
 
 **Constants**
@@ -247,7 +240,7 @@ Contains shared protocol definitions and data structures.
 
 ### Protocol Version
 
-`network_common.PROTOCOL_VERSION = 1` is an unsigned one-byte field at the
+`network_common.PROTOCOL_VERSION = 3` is an unsigned one-byte field at the
 start of every query, acknowledgment, and data response. All multi-byte fields
 use network byte order (big-endian).
 
@@ -258,8 +251,105 @@ or releases. Values are 1 through 255; do not wrap or reuse versions.
 Both endpoints discard packets whose version differs from their own and log
 the mismatch before processing the payload. No version negotiation is performed.
 Malformed or truncated headers, queries, and acknowledgments are also discarded.
-The previous unversioned format is incompatible: upgrade client and server
-together. A version mismatch cannot register a client or satisfy an acknowledgment.
+The previous unversioned format and version 1 (pickle payloads) are incompatible:
+upgrade client and server together. Version 2 peers must also be upgraded:
+version 3 adds complex-array dtype semantics to the payload format. The Protobuf
+field numbers and header layout are unchanged. There is no pickle fallback. A version mismatch cannot register a client or satisfy an acknowledgment.
+
+### Protocol Buffers payload format
+
+Only the DATA_RESPONSE body changes: the existing 5-byte network-order header,
+DATA_QUERY, and ACKNOWLEDGE layouts remain unchanged, with protocol version 3
+in every packet. DATA_RESPONSE contains exactly one serialized `netucs.Value`
+message, defined in [src/netucs_payload.proto](src/netucs_payload.proto).
+No extra length prefix is needed: the UDP datagram provides the message boundary.
+The timestamp added to the client queue is still local receive time.
+
+The Python server queue accepts the following values and nested combinations.
+The client reconstructs them and queues `(receive_timestamp, value)` as before.
+
+| Python value | Protobuf `Value.kind` | Rules |
+|---|---|---|
+| `None` | `null_value` | Boolean true denotes null |
+| `bool` | `bool_value` | False remains distinct from null |
+| `int` | `int_value` / `uint_value` | Signed 64-bit; larger positive values through 2^64-1 use uint64 |
+| `float` | `float_value` | IEEE 754 double |
+| `str` | `string_value` | UTF-8 |
+| `bytes` | `bytes_value` | Raw bytes |
+| `list`, `tuple` | `sequence_value` | Recursive values; `is_tuple` preserves tuple intent |
+| `dict` | `mapping_value` | String keys only; mapping order is not a wire contract |
+| NumPy array | `array_value` | Typed binary numeric data, described below |
+| NumPy scalar | Corresponding scalar kind | Converted to a Python scalar |
+
+Custom Python objects, sets, non-string dictionary keys, cyclic data, and integers
+outside the supported range are rejected. Nesting is limited to 32 levels. Empty
+lists, tuples, mappings, strings, and byte strings are supported. Protocol Buffers
+provides serialization, not packet authentication.
+
+Example payload; the existing demo's `(array, checksum)` tuple also still works:
+
+```python
+import numpy as np
+
+data_queue.put({
+    'sensor': 'A',
+    'samples': np.arange(100, dtype=np.int32),
+    'valid': True,
+})
+```
+
+`NumericArray` contains `dtype`, `shape`, and `data`. Supported dtype names are
+`bool`, `int8`, `int16`, `int32`, `int64`, `uint8`, `uint16`, `uint32`, `uint64`,
+`float32`, `float64`, `complex64`, and `complex128`. Elements are contiguous in C (row-major) order, always
+little-endian, regardless of sender machine byte order. Booleans use one byte
+per element, 0 or 1. Complex elements use interleaved real then imaginary
+components: `complex64` uses two little-endian IEEE 754 float32 components
+(8 bytes per element); `complex128` uses two float64 components (16 bytes).
+This supports GSCV IQ arrays without discarding imaginary values. Noncontiguous
+and big-endian sender arrays are normalized to this same wire layout. Arrays may have up to 32 dimensions; dimensions must fit
+0 through 2^31-1. A zero-dimensional array has one element. The product of the
+shape times the element size must equal the data byte count. Object, string,
+and structured dtypes are unsupported. The receiver validates metadata
+before constructing a writable NumPy array; other languages can use native arrays.
+
+The serialized body must fit 65,502 bytes (65,507-byte IPv4 UDP limit minus the
+header). This is a protocol ceiling, not a guarantee against IP fragmentation.
+Oversized or unsupported outgoing values are logged and dropped; malformed
+incoming Protobuf data is logged and discarded without stopping the client.
+Ordinary values do not require NumPy; a receiver without NumPy discards array
+payloads with a logged error. No received data is passed to pickle.
+
+### Using the schema from another language
+
+Generate bindings from the same schema using your language's Protobuf tooling.
+For example, C++:
+
+```bash
+mkdir -p generated
+protoc --proto_path=src --cpp_out=generated src/netucs_payload.proto
+```
+
+For a received DATA_RESPONSE, validate version/type/length in the netucs header,
+then parse bytes from offset 5 as `netucs.Value`. Inspect its `kind` oneof, recurse
+into `Sequence` and `Mapping`, and interpret `NumericArray` using the rules above.
+For example, string `"hello"` has Protobuf body hex `32 05 68 65 6c 6c 6f`; a full
+response with sequence 0 is `03 00 02 00 00 32 05 68 65 6c 6c 6f`.
+Clients must also implement the existing DATA_QUERY/ACKNOWLEDGE exchange; these
+control messages remain fixed binary structures, not Protobuf messages.
+
+Python bindings are in `src/netucs_payload_pb2.py`. To regenerate them, use a
+compatible Protobuf compiler (for example protoc 3.21):
+
+```bash
+protoc --proto_path=src --python_out=src src/netucs_payload.proto
+```
+
+A newer compiler may require increasing the declared Python runtime dependency;
+check generated-code/runtime compatibility before committing regenerated files.
+Never reuse Protobuf field numbers. Increment the netucs protocol version for
+packet-format or handshake changes, independently of `VERSION` and Git tags.
+Run the full suite with `python3 -m unittest discover -s tests -v` after installing
+the package dependencies (and NumPy for array tests).
 
 ### Exponential Backoff with Noise
 
@@ -416,9 +506,11 @@ logging.basicConfig(
 
 # Server will log to 'netucs.network_server'
 # Client will log to 'netucs.network_client'
-server.log_level(logging.DEBUG)
-client.log_level(logging.DEBUG)
+logging.getLogger('netucs').setLevel(logging.DEBUG)
 ```
+
+All netucs runtime log messages and demo output start with `netucs: `.
+The prefix is part of the message, independent of the application logging formatter.
 
 ### Log Levels
 

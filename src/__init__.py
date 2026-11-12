@@ -13,6 +13,5 @@
 from . import network_common
 from . import network_server
 from . import network_client
-from . import network_test
 
-__all__ = ['network_common', 'network_server', 'network_client', 'network_test']
+__all__ = ['network_common', 'network_server', 'network_client']

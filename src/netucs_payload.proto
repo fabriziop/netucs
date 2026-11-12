@@ -1,0 +1,37 @@
+syntax = "proto3";
+package netucs;
+
+// DATA_RESPONSE body after the 5-byte netucs protocol header.
+// Field numbers are permanent: never reuse them for a different meaning.
+message Value {
+  oneof kind {
+    bool null_value = 1;  // Must be true; represents null/None.
+    bool bool_value = 2;
+    sint64 int_value = 3;
+    uint64 uint_value = 4;  // Integers above signed 64-bit maximum.
+    double float_value = 5;
+    string string_value = 6;
+    bytes bytes_value = 7;
+    Sequence sequence_value = 8;
+    Mapping mapping_value = 9;
+    NumericArray array_value = 10;
+  }
+}
+
+message Sequence {
+  repeated Value items = 1;
+  bool is_tuple = 2;  // Otherwise a list; empty sequences are valid.
+}
+
+message Mapping {
+  map<string, Value> fields = 1;
+}
+
+message NumericArray {
+  // One of bool, int8/16/32/64, uint8/16/32/64, float32/64, complex64/128.
+  string dtype = 1;
+  repeated uint64 shape = 2;
+  // Contiguous C-order elements, little-endian; bool uses bytes 0 or 1.
+  // Complex elements: real then imaginary, float32 (complex64) or float64 (complex128).
+  bytes data = 3;
+}

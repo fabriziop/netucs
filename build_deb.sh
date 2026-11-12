@@ -68,6 +68,8 @@ for module in src/*.py; do
   cp "$module" "$PKG_DIR/$name"
 done
 
+cp src/*.proto "$PKG_DIR/"
+
 cp README.md "$DOC_DIR/README.md"
 cp LICENSE "$DOC_DIR/copyright"
 
@@ -91,7 +93,8 @@ Section: python
 Priority: optional
 Architecture: $ARCH
 Maintainer: Fabrizio Pollastri <mxgbot@gmail.com>
-Depends: python3 (>= 3.8)
+Depends: python3 (>= 3.8), python3-protobuf (>= 3.20.3)
+Recommends: python3-numpy
 Homepage: https://github.com/fabriziop/netucs
 Description: Network UDP Client Server data exchange
  Asynchronous client/server UDP communication library for Python 3.

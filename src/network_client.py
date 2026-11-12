@@ -12,12 +12,12 @@
 import asyncio as ai
 import errno
 import logging
-import pickle as pk
 import struct as st
 import time as tm
 import random as rd
 
 from . import network_common as nc
+from . import network_serialization as serialization
 
 lg = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ class NetworkClient(nc.Protocol):
         # terminate_event is created inside run(); terminate may be requested
         # earlier when startup fails in another thread.
         if self.terminate_event is None:
-            lg.debug("terminate requested before network client startup")
+            lg.debug("netucs: terminate requested before network client startup")
             return
         try:
             if self.loop is not None and self.loop.is_running():
@@ -114,8 +114,13 @@ class NetworkClient(nc.Protocol):
 
             # skip packet header, add rx timestamp, deserialize data and put
             # it on output queue.
-            self.data_queue.put((tm.time(), pk.loads(data[self.packet_header_size :])))
-            lg.debug("received time marker from server")
+            try:
+                payload = serialization.deserialize(data[self.packet_header_size :])
+            except ValueError as exc:
+                lg.warning("netucs: Ignoring invalid Protobuf payload from %s: %s", addr, exc)
+                return
+            self.data_queue.put((tm.time(), payload))
+            lg.debug("netucs: received time marker from server")
 
         # process marker ackknowledge
         elif self.receive_packet_type == nc.PacketTypeCode["ACKNOWLEDGE"].value:
@@ -125,11 +130,11 @@ class NetworkClient(nc.Protocol):
 
     def error_received(self, exc):
         if isinstance(exc, OSError) and exc.errno in nc._NETWORK_ERRORS:
-            lg.warning("UDP network error (%s) — will recreate socket", exc)
+            lg.warning("netucs: UDP network error (%s) — will recreate socket", exc)
             if self.reconnect_event is not None:
                 self.reconnect_event.set()
         else:
-            lg.debug("UDP socket error: %s", exc)
+            lg.debug("netucs: UDP socket error: %s", exc)
 
     async def listener(self):
         """Create (and recreate after network outages) the UDP datagram endpoint."""
@@ -144,14 +149,14 @@ class NetworkClient(nc.Protocol):
                     )
             except OSError as exc:
                 if not self._is_endpoint_create_retryable(exc):
-                    lg.error("could not create UDP endpoint: %s", exc)
+                    lg.error("netucs: could not create UDP endpoint: %s", exc)
                     self.terminate()
                     raise
                 delay = self._calculate_backoff_delay(
                     self.listener_backoff_retry_count
                 )
                 lg.warning(
-                    "could not create UDP endpoint: %s — retrying in %.2f s"
+                    "netucs: could not create UDP endpoint: %s — retrying in %.2f s"
                     " (retry count: %d)",
                     exc,
                     delay,
@@ -166,11 +171,11 @@ class NetworkClient(nc.Protocol):
                     pass
                 continue
             except Exception:
-                lg.exception("unexpected error creating UDP endpoint")
+                lg.exception("netucs: unexpected error creating UDP endpoint")
                 self.terminate()
                 raise
 
-            lg.debug("UDP endpoint ready")
+            lg.debug("netucs: UDP endpoint ready")
             self.reconnect_event.clear()
             self.listener_backoff_retry_count = 0
 
@@ -203,7 +208,7 @@ class NetworkClient(nc.Protocol):
                 self.listener_backoff_retry_count
             )
             lg.info(
-                "network error detected — recreating UDP socket in %.2f s"
+                "netucs: network error detected — recreating UDP socket in %.2f s"
                 " (retry count: %d)",
                 delay,
                 self.listener_backoff_retry_count,
@@ -227,7 +232,7 @@ class NetworkClient(nc.Protocol):
         while not self.terminate_event.is_set():
 
             loop_iteration += 1
-            lg.debug("sender loop iteration %d (backoff_retry_count=%d)", 
+            lg.debug("netucs: sender loop iteration %d (backoff_retry_count=%d)",
                           loop_iteration, self.backoff_retry_count)
 
             # wait for time to send marker request to server
@@ -239,7 +244,7 @@ class NetworkClient(nc.Protocol):
                 - now
             )
             if delay > 0:
-                lg.debug("waiting %.3f seconds before next request", delay)
+                lg.debug("netucs: waiting %.3f seconds before next request", delay)
                 for awaitable in ai.as_completed(
                     [ai.sleep(delay), self.terminate_event.wait()]
                 ):
@@ -249,9 +254,9 @@ class NetworkClient(nc.Protocol):
                     break
 
             # send data request
-            lg.debug("sending data request (seq_num=%d)", self.send_seq_num)
+            lg.debug("netucs: sending data request (seq_num=%d)", self.send_seq_num)
             if self.transport is None:
-                lg.debug("transport not ready (reconnecting), skipping send")
+                lg.debug("netucs: transport not ready (reconnecting), skipping send")
                 self.last_request_time = tm.time()
                 continue
             try:
@@ -264,9 +269,9 @@ class NetworkClient(nc.Protocol):
                 )
             except (AttributeError, RuntimeError, OSError) as exc:
                 if self.terminate_event.is_set():
-                    lg.debug("sender send aborted during shutdown: %s", exc)
+                    lg.debug("netucs: sender send aborted during shutdown: %s", exc)
                     break
-                lg.warning("send request failed (%s), scheduling reconnect", exc)
+                lg.warning("netucs: send request failed (%s), scheduling reconnect", exc)
                 if self.reconnect_event is not None:
                     self.reconnect_event.set()
                 self.last_request_time = tm.time()
@@ -280,16 +285,16 @@ class NetworkClient(nc.Protocol):
                 async with ai.timeout(self.acknowledge_timeout):
                     await self.acknowledge_received.wait()
                     self.acknowledge_received.clear()
-                    lg.info("received marker request acknowledge")
+                    lg.info("netucs: received marker request acknowledge")
                     # Reset backoff on successful acknowledgment
                     self.backoff_retry_count = 0
             # if timeout expired, apply exponential backoff
             except ai.TimeoutError:
-                lg.warning("marker request acknowledge timeout (retry count: %d)", self.backoff_retry_count)
+                lg.warning("netucs: marker request acknowledge timeout (retry count: %d)", self.backoff_retry_count)
 
                 # Check if already terminating
                 if self.terminate_event.is_set():
-                    lg.warning("terminate_event already set before backoff, exiting sender loop")
+                    lg.warning("netucs: terminate_event already set before backoff, exiting sender loop")
                     break
 
                 # Ensure the ack event does not stay set after a timeout.
@@ -299,14 +304,14 @@ class NetworkClient(nc.Protocol):
                 backoff_delay = self._calculate_backoff_delay(
                     self.backoff_retry_count
                 )
-                lg.info("applying exponential backoff: %.3f seconds (retry count: %d)",
+                lg.info("netucs: applying exponential backoff: %.3f seconds (retry count: %d)",
                              backoff_delay, self.backoff_retry_count)
 
                 # Increment retry counter before backoff wait
                 self.backoff_retry_count += 1
 
                 # Wait for backoff duration, but allow clean termination.
-                lg.debug("starting backoff wait of %.3f seconds", backoff_delay)
+                lg.debug("netucs: starting backoff wait of %.3f seconds", backoff_delay)
 
                 # Use asyncio.wait_for to combine sleep and termination check
                 backoff_task = ai.create_task(ai.sleep(backoff_delay))
@@ -327,10 +332,10 @@ class NetworkClient(nc.Protocol):
 
                 # Check which completed first
                 if terminate_task in done:
-                    lg.debug("termination requested during backoff")
+                    lg.debug("netucs: termination requested during backoff")
                     break
                 else:
-                    lg.debug("backoff wait completed, will retry immediately (new retry_count=%d)",
+                    lg.debug("netucs: backoff wait completed, will retry immediately (new retry_count=%d)",
                                   self.backoff_retry_count)
 
                 # Send immediately after backoff (skip the remaining lifetime delay).
@@ -350,9 +355,9 @@ class NetworkClient(nc.Protocol):
                 self.task_listener = tg.create_task(self.listener())
                 self.task_sender = tg.create_task(self.sender())
         except ai.CancelledError:
-            lg.debug("Client run cancelled.")
+            lg.debug("netucs: Client run cancelled.")
         except Exception:
-            lg.exception("")
+            lg.exception("netucs: ")
 
     def shutdown(self):
         """Gracefully shutdown the client."""
@@ -363,6 +368,6 @@ class NetworkClient(nc.Protocol):
             with ai.Runner() as runner:
                 runner.run(self.run())
         except:
-            lg.exception("")
+            lg.exception("netucs: ")
 
 #### END

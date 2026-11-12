@@ -64,7 +64,7 @@ def producer(producer_queue):
     """
     Producer function that fills the queue with random data and checksum.
     """
-    lg.info("Producer starting...")
+    lg.info("netucs: Producer starting...")
 
     for i in range(PRODUCER_CYCLES):
         # an array of random data and its summation
@@ -74,11 +74,11 @@ def producer(producer_queue):
 
         # put the data and its summation in the producer queue
         # This will block if the queue is full, providing natural backpressure.
-        print(f"Producer sent summation: {rdata_sum} (cycle {i+1})")
+        print(f"netucs: Producer sent summation: {rdata_sum} (cycle {i+1})")
         producer_queue.put((rdata, rdata_sum))
 
         tm.sleep(1)  # simulate some delay in producing data
-    lg.info("Producer finished.")
+    lg.info("netucs: Producer finished.")
 
 
 # verify the checksum of the current queue element to be read
@@ -86,23 +86,23 @@ def consumer(consumer_queue, test_finished_event):
     """
     Consumer function that reads data from the queue and verify the checksum.
     """
-    lg.info("Consumer starting...")
+    lg.info("netucs: Consumer starting...")
     for i in range(CONSUMER_CYCLES):
         try:
             # get the current queue element to be read
             # The client wraps data as (timestamp, (rdata, rdata_sum))
             # Use a very long timeout to account for network latency and scheduling delays
             timestamp, (rdata, rdata_sum) = consumer_queue.get(timeout=5)
-            print(f"Consumer received summation: {rdata_sum} (cycle {i+1})")
+            print(f"netucs: Consumer received summation: {rdata_sum} (cycle {i+1})")
 
             # verify array summation
             if np.sum(rdata) != rdata_sum:
-                print("Consumer, sum error.")
+                print("netucs: Consumer, sum error.")
         except qu.Empty:
-            print(f"Consumer timed out waiting for data on cycle {i+1}.")
+            print(f"netucs: Consumer timed out waiting for data on cycle {i+1}.")
             break
 
-    lg.info("Consumer finished.")
+    lg.info("netucs: Consumer finished.")
     test_finished_event.set()
 
 
@@ -111,12 +111,12 @@ async def main():
 
     # Start server
     server_task = asyncio.create_task(server.run())
-    lg.info("Server started, waiting a moment for it to initialize...")
+    lg.info("netucs: Server started, waiting a moment for it to initialize...")
     await asyncio.sleep(0.5)
 
     # Start client
     client_task = asyncio.create_task(client.run())
-    lg.info("Client started.")
+    lg.info("netucs: Client started.")
 
     # Start producer and consumer in separate threads
     producer_thread = threading.Thread(
@@ -125,34 +125,34 @@ async def main():
         target=consumer, args=(consumer_queue, test_finished_event), daemon=False)
 
     producer_thread.start()
-    lg.info("Producer thread started.")
+    lg.info("netucs: Producer thread started.")
     consumer_thread.start()
-    lg.info("Consumer thread started.")
+    lg.info("netucs: Consumer thread started.")
 
     # Wait for the test to complete (block until test_finished_event is set)
-    lg.info("Main: waiting for test to finish...")
+    lg.info("netucs: Main: waiting for test to finish...")
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, test_finished_event.wait)
-    lg.info("Main: test finished event received.")
+    lg.info("netucs: Main: test finished event received.")
 
     # Wait for producer thread to finish
     producer_thread.join(timeout=5)
-    lg.info("Producer thread joined.")
+    lg.info("netucs: Producer thread joined.")
     
     # Give server time to process all remaining items in the producer queue
-    lg.info("Waiting for producer queue to drain...")
+    lg.info("netucs: Waiting for producer queue to drain...")
     max_wait = 15  # seconds
     start_time = tm.time()
     while not producer_queue.empty() and (tm.time() - start_time) < max_wait:
         await asyncio.sleep(0.2)
     
     if not producer_queue.empty():
-        lg.warning(f"Producer queue still has {producer_queue.qsize()} items after timeout")
+        lg.warning(f"netucs: Producer queue still has {producer_queue.qsize()} items after timeout")
     else:
-        lg.info("Producer queue drained successfully.")
+        lg.info("netucs: Producer queue drained successfully.")
 
     # Now safely shutdown
-    lg.info("Shutting down...")
+    lg.info("netucs: Shutting down...")
     client.shutdown()
     server.shutdown()
 
@@ -165,14 +165,14 @@ async def main():
     try:
         await server_task
     except asyncio.CancelledError:
-        lg.info("Server task cancelled.")
+        lg.info("netucs: Server task cancelled.")
     
     try:
         await client_task
     except asyncio.CancelledError:
-        lg.info("Client task cancelled.")
+        lg.info("netucs: Client task cancelled.")
 
-    print("Test finished successfully.")
+    print("netucs: Test finished successfully.")
 
 
 # execution threads
@@ -180,7 +180,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Test interrupted by user.")
+        print("netucs: Test interrupted by user.")
 
 
 #### END

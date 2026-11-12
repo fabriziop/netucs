@@ -2,7 +2,6 @@
 import asyncio
 import importlib
 from pathlib import Path
-import pickle
 import queue
 import struct
 import sys
@@ -15,6 +14,7 @@ package = types.ModuleType('_netucs_protocol_tests')
 package.__path__ = [str(Path(__file__).resolve().parents[1] / 'src')]
 sys.modules[package.__name__] = package
 nc = importlib.import_module(package.__name__ + '.network_common')
+serialization = importlib.import_module(package.__name__ + '.network_serialization')
 NetworkClient = importlib.import_module(package.__name__ + '.network_client').NetworkClient
 NetworkServer = importlib.import_module(package.__name__ + '.network_server').NetworkServer
 ADDR = ('127.0.0.1', 12345)
@@ -28,21 +28,21 @@ def make_client():
 
 class ProtocolTests(unittest.TestCase):
     def test_wire_layout(self):
-        self.assertEqual(nc.PROTOCOL_VERSION, 1)
+        self.assertEqual(nc.PROTOCOL_VERSION, 3)
         self.assertEqual(nc.packet_header.size, 5)
-        self.assertEqual(nc.data_query_packet.pack(1, 1, 7, 3),
-                         b'\x01\x00\x01\x00\x07\x00\x00\x00\x03')
+        self.assertEqual(nc.data_query_packet.pack(nc.PROTOCOL_VERSION, 1, 7, 3),
+                         b'\x03\x00\x01\x00\x07\x00\x00\x00\x03')
         self.assertEqual(nc.acknowledge_packet.size, 9)
 
     def test_registration_and_acknowledgment(self):
         server = NetworkServer(*ADDR, 10, queue.Queue())
         server.transport = Mock()
-        server.datagram_received(nc.data_query_packet.pack(1, 1, 7, 3), ADDR)
+        server.datagram_received(nc.data_query_packet.pack(nc.PROTOCOL_VERSION, 1, 7, 3), ADDR)
         registration = server.clients_to_add.get_nowait()
         self.assertEqual(registration.addr, ADDR)
         self.assertEqual(registration.data_send_period, 3)
         ack, target = server.transport.sendto.call_args.args
-        self.assertEqual(nc.acknowledge_packet.unpack(ack), (1, 99, 0, 7))
+        self.assertEqual(nc.acknowledge_packet.unpack(ack), (3, 99, 0, 7))
         client = make_client()
         client.datagram_received(ack, ADDR)
         self.assertTrue(client.acknowledge_received.is_set())
@@ -51,18 +51,18 @@ class ProtocolTests(unittest.TestCase):
         server = NetworkServer(*ADDR, 10, queue.Queue())
         server.transport = Mock()
         client = make_client()
-        query = nc.data_query_packet.pack(1, 1, 7, 3)
-        ack = nc.acknowledge_packet.pack(1, 99, 0, 7)
-        response = nc.data_response_packet.pack(1, 2, 0) + pickle.dumps('data')
+        query = nc.data_query_packet.pack(nc.PROTOCOL_VERSION, 1, 7, 3)
+        ack = nc.acknowledge_packet.pack(nc.PROTOCOL_VERSION, 99, 0, 7)
+        response = nc.data_response_packet.pack(nc.PROTOCOL_VERSION, 2, 0) + serialization.serialize('data')
         invalid = [b'', struct.pack('!hhl', 1, 7, 3),
                    struct.pack('!hhhxx', 99, 0, 7),
-                   struct.pack('!hh', 2, 0) + pickle.dumps('old')]
+                   struct.pack('!hh', 2, 0) + serialization.serialize('old')]
         for packet in (query, ack, response):
             invalid.extend(packet[:n] for n in range(nc.packet_header.size))
-            invalid.extend(bytes([v]) + packet[1:] for v in (0, 2, 255))
+            invalid.extend(bytes([v]) + packet[1:] for v in (0, 1, 2, 255))
         invalid += [query[:-1], query + b'x', ack[:-1], ack + b'x',
-                    response[:5], nc.packet_header.pack(1, 123, 0)]
-        with patch.object(pickle, 'loads', side_effect=AssertionError('must not deserialize')):
+                    response[:5], nc.packet_header.pack(nc.PROTOCOL_VERSION, 123, 0)]
+        with patch.object(serialization, 'deserialize', side_effect=AssertionError('must not deserialize')):
             for packet in invalid:
                 with self.subTest(packet=packet):
                     server.datagram_received(packet, ADDR)
@@ -77,8 +77,15 @@ class ProtocolTests(unittest.TestCase):
     def test_data_response(self):
         client = make_client()
         payload = {'value': [1, 2, 3]}
-        client.datagram_received(nc.data_response_packet.pack(1, 2, 9) + pickle.dumps(payload), ADDR)
+        client.datagram_received(nc.data_response_packet.pack(nc.PROTOCOL_VERSION, 2, 9) + serialization.serialize(payload), ADDR)
         self.assertEqual(client.data_queue.get_nowait()[1], payload)
+
+    def test_bad_protobuf_is_dropped_and_client_recovers(self):
+        client = make_client()
+        client.datagram_received(nc.data_response_packet.pack(3, 2, 0) + b'\xff', ADDR)
+        self.assertTrue(client.data_queue.empty())
+        client.datagram_received(nc.data_response_packet.pack(nc.PROTOCOL_VERSION, 2, 1) + serialization.serialize('valid'), ADDR)
+        self.assertEqual(client.data_queue.get_nowait()[1], 'valid')
 
 
 class SenderTests(unittest.IsolatedAsyncioTestCase):
@@ -87,7 +94,7 @@ class SenderTests(unittest.IsolatedAsyncioTestCase):
         client.terminate_event = asyncio.Event()
         client.transport = Mock()
         def sent(packet, addr):
-            self.assertEqual(nc.data_query_packet.unpack(packet), (1, 1, 0, 1))
+            self.assertEqual(nc.data_query_packet.unpack(packet), (3, 1, 0, 1))
             client.acknowledge_received.set()
             client.terminate_event.set()
         client.transport.sendto.side_effect = sent
@@ -101,8 +108,8 @@ class SenderTests(unittest.IsolatedAsyncioTestCase):
         server.clients[ADDR] = nc.Client(ADDR, 1, 0, float('inf'))
         server.data_queue.put({'value': 42})
         def sent(packet, addr):
-            self.assertEqual(nc.packet_header.unpack_from(packet), (1, 2, 0))
-            self.assertEqual(pickle.loads(packet[nc.packet_header.size:]), {'value': 42})
+            self.assertEqual(nc.packet_header.unpack_from(packet), (3, 2, 0))
+            self.assertEqual(serialization.deserialize(packet[nc.packet_header.size:]), {'value': 42})
             server.terminate_event.set()
         server.transport.sendto.side_effect = sent
         await asyncio.wait_for(server.sender(), 2)
@@ -119,7 +126,7 @@ class SenderTests(unittest.IsolatedAsyncioTestCase):
         server.terminate_event = asyncio.Event()
         sender = asyncio.create_task(server.sender())
         try:
-            client_transport.sendto(nc.data_query_packet.pack(1, 1, 12, 1))
+            client_transport.sendto(nc.data_query_packet.pack(nc.PROTOCOL_VERSION, 1, 12, 1))
             await asyncio.wait_for(client.acknowledge_received.wait(), 2)
             server.data_queue.put('loopback payload')
             _, payload = await asyncio.wait_for(asyncio.to_thread(client.data_queue.get, True, 2), 3)

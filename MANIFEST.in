@@ -5,3 +5,4 @@ recursive-include src *.py
 include VERSION
 include release.py
 recursive-include tests *.py
+recursive-include src *.proto

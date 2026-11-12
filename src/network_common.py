@@ -23,7 +23,7 @@ lg = logging.getLogger(__name__)
 
 # Independent of the code/package release version. Increment only when the
 # wire packet format or handshake changes; valid versions are 1..255.
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 3
 
 MAX_UDP_SIZE = 65507  # https://en.wikipedia.org/wiki/User_Datagram_Protocol
 
@@ -111,7 +111,7 @@ class Protocol(ai.DatagramProtocol):
         if not data:
             return False
         if data[0] != PROTOCOL_VERSION:
-            lg.warning("Ignoring UDP packet from %s: protocol version %d; expected %d",
+            lg.warning("netucs: Ignoring UDP packet from %s: protocol version %d; expected %d",
                        addr, data[0], PROTOCOL_VERSION)
             return False
         if len(data) < packet_header.size:
@@ -139,15 +139,15 @@ class Protocol(ai.DatagramProtocol):
     def error_received(self, exc):
         # Log UDP errors but don't terminate - these are common when server is unreachable
         # The acknowledge timeout and backoff mechanism will handle retries
-        lg.debug("UDP socket error (expected when server unreachable): %s", exc)
+        lg.debug("netucs: UDP socket error (expected when server unreachable): %s", exc)
 
     def connection_lost(self, exc):
         # Never auto-terminate here: shutdown is controlled by application
         # via explicit terminate() command.
         if exc:
-            lg.warning("Connection lost with error: %s", exc)
+            lg.warning("netucs: Connection lost with error: %s", exc)
         else:
-            lg.debug("Connection closed")
+            lg.debug("netucs: Connection closed")
 
 
 #### END

@@ -14,7 +14,6 @@
 import asyncio as ai
 import errno
 import logging
-import pickle as pk
 import queue as qu
 import random as rd
 import socket as sk
@@ -22,6 +21,7 @@ import struct as st
 import time as tm
 
 from . import network_common as nc
+from . import network_serialization as serialization
 
 lg = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class NetworkServer(nc.Protocol):
         # terminate_event is created inside run(); terminate may be requested
         # earlier when startup fails in another thread.
         if self.terminate_event is None:
-            lg.debug("terminate requested before network server startup")
+            lg.debug("netucs: terminate requested before network server startup")
             return
         self.terminate_event.set()
 
@@ -87,7 +87,7 @@ class NetworkServer(nc.Protocol):
         try:
             self.fatal_error_callback(exc)
         except Exception:
-            self.log.exception("fatal error callback failed")
+            self.log.exception("netucs: fatal error callback failed")
 
     def _is_bind_address_error(self, exc):
         """True when UDP bind failed because the local address is not usable."""
@@ -125,7 +125,7 @@ class NetworkServer(nc.Protocol):
         try:
             self.stopped_callback()
         except Exception:
-            self.log.exception("network stopped callback failed")
+            self.log.exception("netucs: network stopped callback failed")
 
     def datagram_received(self, data, addr):
 
@@ -139,7 +139,7 @@ class NetworkServer(nc.Protocol):
             # if it is a data query packet ...
             # not data query packets are silently discarded
             if packet_type == nc.PacketTypeCode["DATA_QUERY"].value:
-                self.log.info("received data request from %s", addr)
+                self.log.info("netucs: received data request from %s", addr)
 
                 # send acknowledge to client
                 packet = nc.acknowledge_packet.pack(
@@ -151,7 +151,7 @@ class NetworkServer(nc.Protocol):
                 self.transport.sendto(packet, addr)
                 self.send_seq_num += 1
                 self.send_seq_num &= 0x7FFF
-                self.log.info("sent data request acknowledge to %s",addr)
+                self.log.info("netucs: sent data request acknowledge to %s",addr)
 
                 # if client is not on the send list: queue its addition.
                 now = tm.time()
@@ -168,7 +168,7 @@ class NetworkServer(nc.Protocol):
                 else:
                     self.clients[addr].expiration = expiration
         except:
-            self.log.exception("")
+            self.log.exception("netucs: ")
 
     async def listener(self):
         while not self.terminate_event.is_set():
@@ -188,7 +188,7 @@ class NetworkServer(nc.Protocol):
                     not self._is_listener_create_retryable(exc)
                 ):
                     self.log.error(
-                        "could not create UDP listener on %s:%s: %s",
+                        "netucs: could not create UDP listener on %s:%s: %s",
                         self.address,
                         self.port,
                         exc,
@@ -201,7 +201,7 @@ class NetworkServer(nc.Protocol):
                     self.listener_backoff_retry_count
                 )
                 self.log.warning(
-                    "could not create UDP listener on %s:%s: %s; "
+                    "netucs: could not create UDP listener on %s:%s: %s; "
                     "retrying in %.2f s (retry count: %d)",
                     self.address,
                     self.port,
@@ -216,7 +216,7 @@ class NetworkServer(nc.Protocol):
                     pass
             except Exception as exc:
                 self.log.exception(
-                    "unexpected error creating UDP listener on %s:%s",
+                    "netucs: unexpected error creating UDP listener on %s:%s",
                     self.address,
                     self.port,
                 )
@@ -231,7 +231,7 @@ class NetworkServer(nc.Protocol):
         try:
             await self.terminate_event.wait()
         except Exception:
-            self.log.exception("")
+            self.log.exception("netucs: ")
         finally:
             if self.transport is not None:
                 self.transport.close()
@@ -247,14 +247,14 @@ class NetworkServer(nc.Protocol):
 
             # Listener may have already closed the endpoint.
             if self.transport is None:
-                self.log.debug("sender exiting: UDP transport not available")
+                self.log.debug("netucs: sender exiting: UDP transport not available")
                 return
 
             # add client if any, to active clients.
             while not self.clients_to_add.empty():
                 client = self.clients_to_add.get_nowait()
                 self.clients[client.addr] = client
-                self.log.info("added client %s to client list",client.addr)
+                self.log.info("netucs: added client %s to client list",client.addr)
 
             # Block on marker queue with timeout to periodically check termination.
             try:
@@ -263,23 +263,27 @@ class NetworkServer(nc.Protocol):
                 continue
 
             # Serialize marker for UDP payload.
-            data = pk.dumps(marker_data)
+            try:
+                data = serialization.serialize(marker_data)
+            except (ValueError, TypeError, OverflowError, RecursionError) as exc:
+                self.log.error("netucs: Cannot serialize UDP payload; data discarded: %s", exc)
+                continue
 
             # check for max allowed size
             if len(data) > nc.MAX_UDP_SIZE - self.packet_header_size:
-                self.log.error("data exceeding max udp packet size (%d), data discarded",nc.MAX_UDP_SIZE)
+                self.log.error("netucs: data exceeding max udp packet size (%d), data discarded",nc.MAX_UDP_SIZE)
                 continue
 
             # there is new data: send it to all active clients
             # print("new data")
             now = tm.time()
-            self.log.debug("data send time %s UTC OS",now)
+            self.log.debug("netucs: data send time %s UTC OS",now)
 
             for addr, client in list(self.clients.items()):
 
                 # if client is expired, delete it
                 if client.expiration <= now:
-                    self.log.info("removing expired client %s",client.addr)
+                    self.log.info("netucs: removing expired client %s",client.addr)
                     del self.clients[addr]
                     continue
 
@@ -288,7 +292,7 @@ class NetworkServer(nc.Protocol):
                     continue
 
                 # send data to current client
-                self.log.info("sending data to client %s",client.addr)
+                self.log.info("netucs: sending data to client %s",client.addr)
                 data_to_send = bytearray(self.packet_header_size)
                 nc.data_response_packet.pack_into(
                     data_to_send,
@@ -300,15 +304,15 @@ class NetworkServer(nc.Protocol):
                 data_to_send += data
                 # Transport can become None/closed while sender is running.
                 if self.transport is None:
-                    self.log.debug("sender stopping: UDP transport closed")
+                    self.log.debug("netucs: sender stopping: UDP transport closed")
                     return
                 try:
                     self.transport.sendto(data_to_send, addr)
                 except (AttributeError, RuntimeError, OSError) as exc:
                     if self.terminate_event.is_set():
-                        self.log.debug("sender send aborted during shutdown: %s", exc)
+                        self.log.debug("netucs: sender send aborted during shutdown: %s", exc)
                         return
-                    self.log.warning("sender send failed (%s), stopping sender", exc)
+                    self.log.warning("netucs: sender send failed (%s), stopping sender", exc)
                     self.terminate()
                     return
                 self.send_seq_num += 1
@@ -325,7 +329,7 @@ class NetworkServer(nc.Protocol):
                 self.task_listener = tg.create_task(self.listener())
                 self.task_sender = tg.create_task(self.sender())
         except Exception:
-            self.log.exception("")
+            self.log.exception("netucs: ")
         finally:
             self._notify_stopped()
 
@@ -337,6 +341,6 @@ class NetworkServer(nc.Protocol):
         try:
             ai.run(self.run())
         except Exception:
-            self.log.exception("")
+            self.log.exception("netucs: ")
 
 #### END
