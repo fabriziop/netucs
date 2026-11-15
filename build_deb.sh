@@ -41,7 +41,7 @@ if [ "$IS_RELEASE" = false ]; then
   REL="${REL}+build${counter}"
 fi
 
-ARCH=all
+ARCH=$(dpkg --print-architecture)
 STAGE=debian
 OUT=${PKG}_${VERSION}-${REL}_${ARCH}.deb
 PKG_DIR="$STAGE/usr/lib/python3/dist-packages/netucs"
@@ -56,6 +56,33 @@ cleanup_generated() {
 }
 
 cleanup_generated
+
+for tool in cmake c++ python3; do
+  command -v "$tool" >/dev/null 2>&1 || {
+    echo "Error: $tool is required to build the native extension" >&2; exit 1;
+  }
+done
+PYBIND_CMAKE_DIR=$(python3 -m pybind11 --cmakedir 2>/dev/null || true)
+if [ -z "$PYBIND_CMAKE_DIR" ]; then
+  echo "Error: pybind11 is missing; install python3-pybind11 or pybind11-dev." >&2
+  exit 1
+fi
+# Optional overrides: CONDUCTOR_ROOT, CONDUCTOR_INCLUDE_DIR, CONDUCTOR_LIBRARY.
+conductor_args=()
+for var in CONDUCTOR_ROOT CONDUCTOR_INCLUDE_DIR CONDUCTOR_LIBRARY; do
+  if [ -n "${!var:-}" ]; then
+    conductor_args+=("-D${var}=${!var}")
+  fi
+done
+cmake -S . -B build-deb -DNETUCS_BUILD_PYTHON=ON -DNETUCS_BUILD_TESTS=OFF \
+  -Dpybind11_DIR="$PYBIND_CMAKE_DIR" -DCMAKE_BUILD_TYPE=Release \
+  "${conductor_args[@]}"
+cmake --build build-deb --parallel "${JOBS:-2}"
+NATIVE_SO=$(find build-deb -maxdepth 2 -type f -name '_netucs_native*.so' -print -quit)
+if [ -z "$NATIVE_SO" ]; then
+  echo "Error: C++ build did not produce _netucs_native*.so" >&2
+  exit 1
+fi
 rm -rf "$STAGE"
 mkdir -p \
   "$STAGE/DEBIAN" \
@@ -69,6 +96,10 @@ for module in src/*.py; do
 done
 
 cp src/*.proto "$PKG_DIR/"
+cp "$NATIVE_SO" "$PKG_DIR/"
+# Fail the build if the installed package cannot import its native extension.
+PYTHONPATH="$STAGE/usr/lib/python3/dist-packages" python3 -c \
+  'import netucs; from netucs import network_client; assert network_client.NetworkClient is netucs.NetworkClient' 
 
 cp README.md "$DOC_DIR/README.md"
 cp LICENSE "$DOC_DIR/copyright"
@@ -93,11 +124,11 @@ Section: python
 Priority: optional
 Architecture: $ARCH
 Maintainer: Fabrizio Pollastri <mxgbot@gmail.com>
-Depends: python3 (>= 3.8), python3-protobuf (>= 3.20.3)
+Depends: python3 (>= 3.9), python3-protobuf (>= 3.20.3), libstdc++6, libc6
 Recommends: python3-numpy
 Homepage: https://github.com/fabriziop/netucs
 Description: Network UDP Client Server data exchange
- Asynchronous client/server UDP communication library for Python 3.
+ Native C++20 client/server UDP communication with Python 3 bindings.
 EOF
 
 find "$STAGE/usr" -type d -exec chmod 0755 {} +

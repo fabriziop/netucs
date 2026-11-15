@@ -1,63 +1,18 @@
-# .+
-# .context    : generic data UDP sending from server to clients
-# .title      : project configuration
-# .kind       : TOML configuration
-# .author     : Fabrizio Pollastri <mxgbot@gmail.com>
-# .site       : Torino - Italy
-# .creation   : 24-Feb-2026
-# .copyright  : (c) 2023 Fabrizio Pollastri
-# .license    : all right reserved
-# .-
-
-
-
-
 [build-system]
-requires = ["setuptools>=64", "wheel"]
-build-backend = "setuptools.build_meta"
-
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
 [project]
 name = "netucs"
-description = "Network UDP Client Server data exchange - asynchronous client/server UDP communication"
-readme = "README.md"
 dynamic = ["version"]
-requires-python = ">=3.8"
+description = "Conductor-scheduled C++ UDP networking with Python bindings"
+requires-python = ">=3.9"
 dependencies = ["protobuf>=3.20.3,<7"]
-license = {text = "GPLv3"}
-authors = [
-    {name = "Fabrizio Pollastri", email = "mxgbot@gmail.com"},
-]
-keywords = ["udp", "client", "server", "asyncio", "network", "communication", "data-exchange"]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Science/Research",
-    "Topic :: Communications",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Operating System :: OS Independent",
-]
-
-[project.urls]
-"Homepage" = "https://github.com/fabriziop/netucs"
-"Bug Reports" = "https://github.com/fabriziop/netucs/issues"
-"Source" = "https://github.com/fabriziop/netucs"
-
-[tool.setuptools]
-package-dir = {"netucs" = "src"}
-packages = ["netucs"]
-
-[tool.setuptools.dynamic]
-version = {file = "VERSION"}
-
 [project.optional-dependencies]
 numpy = ["numpy>=1.20"]
+[tool.scikit-build]
+wheel.packages = {"netucs" = "src"}
 
-[tool.setuptools.package-data]
-netucs = ["*.proto"]
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.regex"
+input = "VERSION"
+regex = '(?P<value>[0-9]+\.[0-9]+\.[0-9]+)'
