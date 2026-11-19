@@ -21,6 +21,9 @@ namespace netucs {
 namespace {
 std::mutex log_mutex;
 LogCallback log_callback;
+// Multiple server wrappers may request shutdown for the same process.
+// Emit the process-level termination notice only once.
+std::atomic<bool> server_termination_logged{false};
 void log(LogLevel level, const char* logger, const std::string& message) {
     LogCallback cb;
     { std::lock_guard<std::mutex> lock(log_mutex); cb=log_callback; }
@@ -58,6 +61,11 @@ int socket_open(const sockaddr_in* bind_addr=nullptr) {
     }
     return fd;
 }
+std::string endpoint(const sockaddr_in& addr) {
+    char ip[INET_ADDRSTRLEN]{};
+    if (!inet_ntop(AF_INET, &addr.sin_addr, ip, sizeof(ip))) return "<invalid-address>";
+    return std::string(ip) + ":" + std::to_string(ntohs(addr.sin_port));
+}
 std::string key(const sockaddr_in& addr) { return std::string(reinterpret_cast<const char*>(&addr),sizeof(addr)); }
 struct Worker {
     std::atomic<bool> active{false};
@@ -87,6 +95,7 @@ void set_log_callback(LogCallback callback) {
     log_callback=std::move(callback);
 }
 struct NetworkClient::Impl {
+    std::atomic<bool> termination_logged{false};
     ClientConfig config;
     ReceiveCallback callback;
     Worker w;
@@ -130,7 +139,12 @@ struct NetworkClient::Impl {
             std::uint8_t buf[65507];
             while(w.active) {
                 pollfd pfd{w.fd,POLLIN,0};
-                if(::poll(&pfd,1,100)<=0) continue;
+                int ready=::poll(&pfd,1,100);
+                if(ready<0) {
+                    if(errno!=EINTR && w.active) log(LogLevel::Warning,"netucs.network_server","netucs: UDP poll failed: "+std::string(std::strerror(errno)));
+                    continue;
+                }
+                if(ready==0) continue;
                 sockaddr_in sender{}; socklen_t sl=sizeof(sender);
                 ssize_t n=::recvfrom(w.fd,buf,sizeof(buf),0,reinterpret_cast<sockaddr*>(&sender),&sl);
                 if(n<=0 || sender.sin_addr.s_addr!=remote.sin_addr.s_addr || sender.sin_port!=remote.sin_port) continue;
@@ -149,13 +163,14 @@ struct NetworkClient::Impl {
 };
 NetworkClient::NetworkClient(ClientConfig c,ReceiveCallback cb):impl_(new Impl(std::move(c),std::move(cb))) {}
 NetworkClient::~NetworkClient(){terminate();join();}
-void NetworkClient::start(){auto& i=*impl_; if(i.w.active.exchange(true)) return; log(LogLevel::Info,"netucs.network_client","netucs: starting network client"); i.w.thread=std::thread([&i]{i.run();});}
+void NetworkClient::start(){auto& i=*impl_; if(i.w.active.exchange(true)) return; i.termination_logged=false; log(LogLevel::Info,"netucs.network_client","netucs: starting network client"); i.w.thread=std::thread([&i]{i.run();});}
 void NetworkClient::main(){start();join();}
-void NetworkClient::terminate(){log(LogLevel::Debug,"netucs.network_client","netucs: terminating network client"); impl_->w.stop();}
+void NetworkClient::terminate(){if(!impl_->termination_logged.exchange(true)) log(LogLevel::Debug,"netucs.network_client","netucs: terminating network client"); impl_->w.stop();}
 void NetworkClient::join(){impl_->w.join();}
 bool NetworkClient::running() const{return impl_->w.active;}
 
 struct NetworkServer::Impl {
+    std::atomic<bool> termination_logged{false};
     struct Client {sockaddr_in address{}; double expiration=0, next_send=0, period=1;};
     ServerConfig config;
     Worker w;
@@ -172,10 +187,15 @@ struct NetworkServer::Impl {
             double t=now();
             for(auto it=clients.begin();it!=clients.end();) {
                 auto& c=it->second;
-                if(c.expiration<=t) {it=clients.erase(it);continue;}
+                if(c.expiration<=t) {
+                    log(LogLevel::Info,"netucs.network_server","netucs: client expired: "+endpoint(c.address));
+                    it=clients.erase(it);continue;
+                }
                 if(c.next_send<=t) {
                     Bytes pkt; header(pkt,2,seq++); pkt.insert(pkt.end(),data.begin(),data.end());
-                    ::sendto(w.fd,pkt.data(),pkt.size(),0,reinterpret_cast<sockaddr*>(&c.address),sizeof(c.address));
+                    auto sent=::sendto(w.fd,pkt.data(),pkt.size(),0,reinterpret_cast<sockaddr*>(&c.address),sizeof(c.address));
+                    if(sent<0) log(LogLevel::Warning,"netucs.network_server","netucs: data send failed to "+endpoint(c.address)+": "+std::strerror(errno));
+                    else log(LogLevel::Debug,"netucs.network_server","netucs: sent UDP data to "+endpoint(c.address)+" (bytes="+std::to_string(sent)+")");
                     c.next_send=t+std::max(.0,c.period-1.1);
                 }
                 ++it;
@@ -186,33 +206,50 @@ struct NetworkServer::Impl {
         try {
             auto local=resolve(config.address,config.port,true);
             w.fd=socket_open(&local);
-            log(LogLevel::Info,"netucs.network_server","netucs: UDP server listening");
+            log(LogLevel::Info,"netucs.network_server","netucs: UDP server listening on "+endpoint(local));
             w.scheduler.add_task([this]{flush();},periodic(.01,"server_send"));
             w.scheduler.start_engine();
             std::uint8_t buf[65507];
             while(w.active) {
                 pollfd pfd{w.fd,POLLIN,0};
-                if(::poll(&pfd,1,100)<=0) continue;
+                int ready=::poll(&pfd,1,100);
+                if(ready<0) {
+                    if(errno!=EINTR && w.active) log(LogLevel::Warning,"netucs.network_server","netucs: UDP poll failed: "+std::string(std::strerror(errno)));
+                    continue;
+                }
+                if(ready==0) continue;
                 sockaddr_in sender{}; socklen_t sl=sizeof(sender);
                 ssize_t n=::recvfrom(w.fd,buf,sizeof(buf),0,reinterpret_cast<sockaddr*>(&sender),&sl);
-                if(n!=9 || packet_type(buf,static_cast<std::size_t>(n))!=1) continue;
+                if(n<0) {
+                    if(w.active) log(LogLevel::Warning,"netucs.network_server","netucs: UDP receive failed: "+std::string(std::strerror(errno)));
+                    continue;
+                }
+                if(n!=9 || packet_type(buf,static_cast<std::size_t>(n))!=1) {
+                    log(LogLevel::Debug,"netucs.network_server","netucs: ignoring invalid client request from "+endpoint(sender)+" (bytes="+std::to_string(n)+")");
+                    continue;
+                }
+                log(LogLevel::Debug,"netucs.network_server","netucs: received client request from "+endpoint(sender));
                 Bytes ackpkt; header(ackpkt,99,seq++); ackpkt.push_back(buf[3]);ackpkt.push_back(buf[4]);ackpkt.push_back(0);ackpkt.push_back(0);
-                ::sendto(w.fd,ackpkt.data(),ackpkt.size(),0,reinterpret_cast<sockaddr*>(&sender),sizeof(sender));
+                auto ack_sent=::sendto(w.fd,ackpkt.data(),ackpkt.size(),0,reinterpret_cast<sockaddr*>(&sender),sizeof(sender));
+                if(ack_sent<0) log(LogLevel::Warning,"netucs.network_server","netucs: acknowledge send failed to "+endpoint(sender)+": "+std::strerror(errno));
+                else log(LogLevel::Debug,"netucs.network_server","netucs: sent request acknowledge to "+endpoint(sender));
                 std::uint32_t period=(static_cast<std::uint32_t>(buf[5])<<24)|(static_cast<std::uint32_t>(buf[6])<<16)|(buf[7]<<8)|buf[8];
                 std::lock_guard<std::mutex> lock(mutex);
+                bool is_new=clients.find(key(sender))==clients.end();
                 auto& c=clients[key(sender)];c.address=sender;c.expiration=now()+config.client_lifetime;c.period=std::max(1u,period);
-                log(LogLevel::Debug,"netucs.network_server","netucs: client registration refreshed");
+                log(is_new?LogLevel::Info:LogLevel::Debug,"netucs.network_server",std::string("netucs: client registration ")+(is_new?"added: ":"refreshed: ")+endpoint(sender)+" (period="+std::to_string(c.period)+"s)");
             }
         } catch(const std::exception& e) {log(LogLevel::Error,"netucs.network_server",std::string("netucs: server worker failed: ")+e.what());w.active=false;}
         catch(...) {log(LogLevel::Error,"netucs.network_server","netucs: server worker failed: unknown error");w.active=false;}
         w.scheduler.stop(); w.active=false;
+        log(LogLevel::Info,"netucs.network_server","netucs: network server stopped");
     }
 };
 NetworkServer::NetworkServer(ServerConfig c):impl_(new Impl(std::move(c))){}
 NetworkServer::~NetworkServer(){terminate();join();}
-void NetworkServer::start(){auto& i=*impl_;if(i.w.active.exchange(true)) return;log(LogLevel::Info,"netucs.network_server","netucs: starting network server");i.w.thread=std::thread([&i]{i.run();});}
+void NetworkServer::start(){auto& i=*impl_;if(i.w.active.exchange(true)) return;i.termination_logged=false;log(LogLevel::Info,"netucs.network_server","netucs: starting network server");i.w.thread=std::thread([&i]{i.run();});}
 void NetworkServer::main(){start();join();}
-void NetworkServer::terminate(){impl_->w.stop();}
+void NetworkServer::terminate(){if(!server_termination_logged.exchange(true)) log(LogLevel::Debug,"netucs.network_server","netucs: terminating network server");impl_->w.stop();}
 void NetworkServer::join(){impl_->w.join();}
 bool NetworkServer::running() const{return impl_->w.active;}
 void NetworkServer::publish(Bytes b){if(b.empty() || b.size()>65502) throw std::invalid_argument("Invalid protobuf payload size");auto& i=*impl_;std::lock_guard<std::mutex> lock(i.mutex);i.pending.push_back(std::move(b));}

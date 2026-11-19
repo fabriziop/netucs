@@ -1,0 +1,30 @@
+Source: netucs
+Section: libs
+Priority: optional
+Maintainer: Fabrizio Pollastri <mxgbot@gmail.com>
+Build-Depends: debhelper-compat (= 13), cmake (>= 3.18), g++, python3-dev, pybind11-dev, libconductor-dev, dh-sequence-python3
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: libnetucs0
+Architecture: any
+Multi-Arch: same
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: NetUCS native UDP networking runtime
+ Shared C++ networking library backed by Conductor.
+
+Package: libnetucs-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends: libnetucs0 (= ${binary:Version}), libconductor-dev, ${misc:Depends}
+Description: NetUCS C++ development files
+ Headers, linker symlink and CMake package configuration.
+
+Package: python3-netucs
+Section: python
+Architecture: any
+Depends: libnetucs0 (= ${binary:Version}), python3-protobuf (>= 3.20.3), ${python3:Depends}, ${shlibs:Depends}, ${misc:Depends}
+Recommends: python3-numpy
+Description: NetUCS Python networking bindings
+ Python API and extension backed by the shared NetUCS runtime.

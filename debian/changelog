@@ -1,0 +1,5 @@
+netucs (0.9.0) unstable; urgency=medium
+
+  * Align Debian packaging with Conductor: runtime, development and Python packages.
+
+ -- Fabrizio Pollastri <mxgbot@gmail.com>  Wed, 18 Nov 2026 12:00:00 +0100

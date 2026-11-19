@@ -1,0 +1,7 @@
+#!/usr/bin/make -f
+export DH_VERBOSE = 0
+%:
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	dh_auto_configure -- -DCMAKE_BUILD_TYPE=Release -DNETUCS_BUILD_PYTHON=ON -DNETUCS_BUILD_TESTS=OFF -DNETUCS_PYTHON_INSTALL_DIR=lib/python3/dist-packages

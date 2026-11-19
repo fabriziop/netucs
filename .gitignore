@@ -135,5 +135,18 @@ Thumbs.db
 
 # Local Debian build output and counter
 /.deb-build-counter
-/debian/
 /python3-netucs_*.deb
+
+# Debian packaging artifacts
+/debian/.debhelper/
+/debian/tmp/
+/debian/libnetucs0/
+/debian/libnetucs-dev/
+/debian/python3-netucs/
+/debian/*.debhelper.log
+/debian/*.substvars
+/debian/*.debhelper
+/debian/debhelper-build-stamp
+/debian/files
+/libnetucs*.deb
+/build-deb/

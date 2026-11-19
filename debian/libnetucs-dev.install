@@ -1,0 +1,3 @@
+usr/include/netucs/*
+usr/lib/*/libnetucs.so
+usr/lib/*/cmake/netucs/*
